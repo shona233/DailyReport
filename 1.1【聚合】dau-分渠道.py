@@ -861,7 +861,7 @@ def validate_data_interface():
 
 def main():
     st.set_page_config(
-        page_title="专业数据处理平台",
+        page_title="日报数据处理平台",
         page_icon="⚡",
         layout="wide",
         initial_sidebar_state="collapsed"
@@ -1225,7 +1225,7 @@ def main():
     st.markdown(
         """
         <div style='text-align: center; color: #666; padding: 20px;'>
-            <h4>专业数据处理平台</h4>
+            <h4>日报数据处理平台</h4>
             <p><strong>环境要求:</strong> Python 3.8+ | streamlit | pandas | numpy | openpyxl</p>
             <p style='margin-top: 15px; font-size: 14px; background-color: #f8f9fa; padding: 10px; border-radius: 5px;'>
                 <strong>安装依赖:</strong> 
