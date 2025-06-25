@@ -1,5 +1,5 @@
 """
-完整数据处理工具 - 集成版（优化布局）
+专业数据处理工具 - 优化版
 ========================
 
 环境要求:
@@ -540,7 +540,7 @@ def create_integrated_retention(retention_data: Dict[str, pd.DataFrame]) -> pd.D
 
 def delete_excel_by_date_interface():
     """底表日期删除界面"""
-    st.subheader("📅 底表日期删除功能")
+    st.subheader("底表日期删除功能")
     
     # 上传Excel文件
     uploaded_excel = st.file_uploader(
@@ -582,7 +582,7 @@ def delete_excel_by_date_interface():
                 key="retention_date"
             )
         
-        if st.button("🗑️ 执行删除操作", type="primary"):
+        if st.button("执行删除操作", type="primary"):
             if not retention_date:
                 st.error("请输入三端留存截止日期")
                 return
@@ -667,7 +667,7 @@ def delete_excel_by_date_interface():
                     
                     output.seek(0)
                     
-                    st.success("✅ 删除操作完成!")
+                    st.success("删除操作完成!")
                     
                     # 显示删除结果统计
                     st.markdown("### 删除结果统计")
@@ -685,7 +685,7 @@ def delete_excel_by_date_interface():
                     
                     # 提供下载
                     st.download_button(
-                        label="📥 下载处理后的Excel文件",
+                        label="下载处理后的Excel文件",
                         data=output.getvalue(),
                         file_name=f"底表_删除后_{datetime.now().strftime('%m%d')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -696,7 +696,7 @@ def delete_excel_by_date_interface():
 
 def validate_data_interface():
     """数据校验界面"""
-    st.subheader("🔍 数据校验功能")
+    st.subheader("数据校验功能")
     
     # 上传文件
     col1, col2 = st.columns(2)
@@ -718,7 +718,7 @@ def validate_data_interface():
         )
     
     if excel_file and csv_file:
-        if st.button("🚀 开始数据校验", type="primary"):
+        if st.button("开始数据校验", type="primary"):
             with st.spinner("正在进行数据校验..."):
                 try:
                     # 读取Excel文件
@@ -757,7 +757,7 @@ def validate_data_interface():
                         retention_all_df['三端'] = retention_all_df[app_id_col].apply(map_app_id_to_platform)
                     
                     # 创建数据透视表
-                    st.markdown("### 📊 数据透视表分析")
+                    st.markdown("### 数据透视表分析")
                     
                     # DAU透视表
                     if not dau_df.empty:
@@ -819,7 +819,7 @@ def validate_data_interface():
                                 
                                 # 数值对比分析
                                 if 'retention_pivot' in locals():
-                                    st.markdown("### 🔍 数值对比分析")
+                                    st.markdown("### 数值对比分析")
                                     
                                     overlapping_dates = set(retention_pivot.index).intersection(set(retention_all_pivot.index))
                                     
@@ -854,25 +854,70 @@ def validate_data_interface():
                                                 st.write(f"- 最大差异: {max(differences):.0f}")
                                                 st.write(f"- 最小差异: {min(differences):.0f}")
                     
-                    st.success("✅ 数据校验完成!")
+                    st.success("数据校验完成!")
                     
                 except Exception as e:
                     st.error(f"数据校验过程中发生错误: {str(e)}")
 
 def main():
     st.set_page_config(
-        page_title="日报数据处理工具 - 集成版",
-        page_icon="📊",
-        layout="wide"
+        page_title="专业数据处理平台",
+        page_icon="⚡",
+        layout="wide",
+        initial_sidebar_state="collapsed"
     )
     
-    st.title("📊 日报数据处理工具 - 集成版")
-    st.markdown("**DAU合并 + 留存率计算 + 底表日期删除 + 据校验**")
-    st.markdown("---")
+    # 自定义CSS样式
+    st.markdown("""
+    <style>
+    .main-header {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        padding: 2rem 0;
+        margin: -1rem -1rem 2rem -1rem;
+        border-radius: 0 0 10px 10px;
+    }
+    .main-title {
+        color: white;
+        text-align: center;
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin: 0;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .main-subtitle {
+        color: rgba(255,255,255,0.9);
+        text-align: center;
+        font-size: 1.1rem;
+        margin: 0.5rem 0 0 0;
+        font-weight: 300;
+    }
+    .feature-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        margin: 1rem 0;
+        border-left: 4px solid #667eea;
+    }
+    .metric-container {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     
-    # ========== 主要功能区域 ==========
+    # 主标题区域
+    st.markdown("""
+    <div class="main-header">
+        <h1 class="main-title">专业数据处理平台</h1>
+        <p class="main-subtitle">DAU合并 • 留存率计算 • 底表管理 • 数据校验</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     # 创建四个标签页
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 DAU文件处理", "🔄 留存文件处理", "📅 底表日期删除", "🔍 数据校验"])
+    tab1, tab2, tab3, tab4 = st.tabs(["DAU文件处理", "留存文件处理", "底表日期删除", "数据校验"])
     
     # 存储处理结果
     if 'dau_results' not in st.session_state:
@@ -882,7 +927,9 @@ def main():
     
     # DAU文件处理标签页
     with tab1:
-        st.subheader("📁 上传DAU文件")
+        st.subheader("DAU文件处理")
+        st.markdown("上传DAU CSV文件进行批量处理和合并")
+        
         dau_files = st.file_uploader(
             "选择DAU CSV文件",
             type=['csv'],
@@ -894,16 +941,18 @@ def main():
         if dau_files:
             st.success(f"已选择 {len(dau_files)} 个DAU文件")
             
-            if st.button("🚀 处理DAU文件", type="primary", key="process_dau"):
+            if st.button("处理DAU文件", type="primary", key="process_dau"):
                 with st.spinner("正在处理DAU文件..."):
                     st.session_state.dau_results = process_dau_files(dau_files)
                 
                 if st.session_state.dau_results:
-                    st.success("✅ DAU文件处理完成!")
+                    st.success("DAU文件处理完成!")
     
     # 留存文件处理标签页
     with tab2:
-        st.subheader("📁 上传留存文件")
+        st.subheader("留存文件处理")
+        st.markdown("上传留存CSV文件进行处理和留存率计算")
+        
         retention_files = st.file_uploader(
             "选择留存CSV文件",
             type=['csv'],
@@ -915,12 +964,12 @@ def main():
         if retention_files:
             st.success(f"已选择 {len(retention_files)} 个留存文件")
             
-            if st.button("🚀 处理留存文件", type="primary", key="process_retention"):
+            if st.button("处理留存文件", type="primary", key="process_retention"):
                 with st.spinner("正在处理留存文件..."):
                     st.session_state.retention_results = process_retention_files(retention_files)
                 
                 if st.session_state.retention_results:
-                    st.success("✅ 留存文件处理完成!")
+                    st.success("留存文件处理完成!")
     
     # 底表日期删除标签页
     with tab3:
@@ -933,14 +982,14 @@ def main():
     # 如果有DAU或留存处理结果，显示数据预览和下载选项
     if st.session_state.dau_results or st.session_state.retention_results:
         st.markdown("---")
-        st.subheader("📊 文件处理结果")
+        st.subheader("处理结果")
         
         # 创建结果标签页
         result_tabs = []
         if st.session_state.dau_results:
-            result_tabs.append("📈 DAU数据")
+            result_tabs.append("DAU数据")
         if st.session_state.retention_results:
-            result_tabs.append("🔄 留存数据")
+            result_tabs.append("留存数据")
         
         if result_tabs:
             tabs = st.tabs(result_tabs)
@@ -965,7 +1014,7 @@ def main():
                             st.metric("整合后行数", len(integrated_dau))
                     
                     # 数据预览
-                    preview_tabs = st.tabs(["🎯 三端DAU汇总"] + [f"{ch.upper()}渠道" for ch in dau_data.keys()])
+                    preview_tabs = st.tabs(["三端DAU汇总"] + [f"{ch.upper()}渠道" for ch in dau_data.keys()])
                     
                     # 三端汇总预览
                     with preview_tabs[0]:
@@ -1000,7 +1049,7 @@ def main():
                             st.metric("整合后行数", len(integrated_retention))
                     
                     # 数据预览
-                    preview_tabs = st.tabs(["🎯 三端留存汇总"] + [f"{ch.upper()}渠道" for ch in retention_data.keys()])
+                    preview_tabs = st.tabs(["三端留存汇总"] + [f"{ch.upper()}渠道" for ch in retention_data.keys()])
                     
                     # 三端汇总预览
                     with preview_tabs[0]:
@@ -1016,12 +1065,12 @@ def main():
         
         # 下载区域
         st.markdown("---")
-        st.subheader("💾 下载处理后的文件")
+        st.subheader("文件下载")
         
         today = datetime.datetime.now().strftime("%m.%d")
         
         # 主要下载选项
-        st.markdown("### 🎯 **汇总文件下载**")
+        st.markdown("### 汇总文件")
         
         download_cols = st.columns(2)
         
@@ -1033,15 +1082,15 @@ def main():
                     # 使用UTF-8 BOM编码确保中文正确显示
                     csv_data = integrated_dau.to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(
-                        label="📈 下载三端DAU汇总文件",
+                        label="下载三端DAU汇总文件",
                         data=csv_data.encode('utf-8-sig'),
                         file_name=f"{today} 三端dau汇总.csv",
                         mime="text/csv",
                         type="primary"
                     )
-                    st.success(f"✅ {len(integrated_dau)} 行DAU数据")
+                    st.success(f"✓ {len(integrated_dau)} 行DAU数据")
                 else:
-                    st.error("❌ DAU汇总数据生成失败")
+                    st.error("✗ DAU汇总数据生成失败")
         
         # 留存汇总下载
         if st.session_state.retention_results:
@@ -1051,18 +1100,18 @@ def main():
                     # 使用UTF-8 BOM编码确保中文正确显示
                     csv_data = integrated_retention.to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(
-                        label="🔄 下载三端留存汇总文件",
+                        label="下载三端留存汇总文件",
                         data=csv_data.encode('utf-8-sig'),
                         file_name=f"{today} 三端留存汇总.csv",
                         mime="text/csv",
                         type="primary"
                     )
-                    st.success(f"✅ {len(integrated_retention)} 行留存数据")
+                    st.success(f"✓ {len(integrated_retention)} 行留存数据")
                 else:
-                    st.error("❌ 留存汇总数据生成失败")
+                    st.error("✗ 留存汇总数据生成失败")
         
         # 分渠道文件下载
-        st.markdown("### 📁 **分渠道文件下载**")
+        st.markdown("### 分渠道文件")
         
         # DAU分渠道下载
         if st.session_state.dau_results:
@@ -1073,7 +1122,7 @@ def main():
                     # 使用UTF-8 BOM编码确保中文正确显示
                     csv_data = df.to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(
-                        label=f"📈 DAU-{channel.upper()}",
+                        label=f"DAU-{channel.upper()}",
                         data=csv_data.encode('utf-8-sig'),
                         file_name=f"{today} dau汇总_{channel}.csv",
                         mime="text/csv",
@@ -1090,7 +1139,7 @@ def main():
                     # 使用UTF-8 BOM编码确保中文正确显示
                     csv_data = df.to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(
-                        label=f"🔄 留存-{channel.upper()}",
+                        label=f"留存-{channel.upper()}",
                         data=csv_data.encode('utf-8-sig'),
                         file_name=f"{today} 留存_{channel}.csv",
                         mime="text/csv",
@@ -1099,21 +1148,59 @@ def main():
                     st.text(f"{len(df)} 行数据")
     
     else:
-        st.info("👆 请选择相应的标签页开始处理数据")
-    
-    # ========== 使用说明和信息区域 ==========
-    st.markdown("---")
+        # 显示功能介绍
+        st.markdown("### 平台功能")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            <div class="feature-card">
+                <h4>DAU文件处理</h4>
+                <p>• 批量处理多个DAU CSV文件</p>
+                <p>• 自动按渠道分组合并</p>
+                <p>• 统一数据格式和日期</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown("""
+            <div class="feature-card">
+                <h4>底表日期删除</h4>
+                <p>• 删除Excel底表指定日期后的数据</p>
+                <p>• 支持分别设置DAU和留存截止日期</p>
+                <p>• 自动生成处理结果统计</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            <div class="feature-card">
+                <h4>留存文件处理</h4>
+                <p>• 处理多渠道留存数据文件</p>
+                <p>• 自动计算各天留存率</p>
+                <p>• 支持iOS、Android、MVP渠道</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown("""
+            <div class="feature-card">
+                <h4>数据校验</h4>
+                <p>• 对比底表与retention_all数据</p>
+                <p>• 生成数据透视表分析</p>
+                <p>• 提供详细的差异报告</p>
+            </div>
+            """, unsafe_allow_html=True)
     
     # 使用说明
-    with st.expander("📋 使用说明", expanded=False):
+    with st.expander("使用说明", expanded=False):
         st.markdown("""
-        ### 🎯 功能概述
+        ### 功能概述
         1. **DAU文件合并**: 处理多个DAU CSV文件，按渠道分组合并
         2. **留存率计算**: 处理留存数据文件，自动计算各天留存率
         3. **底表日期删除**: 删除Excel底表中指定日期及之后的数据
         4. **数据校验**: 对比分析底表数据与retention_all.csv数据的一致性
         
-        ### 📁 文件要求
+        ### 文件要求
         **DAU文件命名**: `dau_渠道_日期.csv` (例如: `dau_mvp_3.17.csv`)
         - 支持渠道: mvp, and, ios
         
@@ -1125,7 +1212,7 @@ def main():
         
         **底表文件**: Excel格式，包含"三端DAU"和"三端留存"工作表
         
-        ### 📤 输出文件
+        ### 输出文件
         - **三端DAU汇总文件**: 包含所有渠道DAU数据
         - **三端留存汇总文件**: 包含所有渠道留存数据
         - **各渠道单独文件**: DAU和留存的分渠道文件
@@ -1133,43 +1220,15 @@ def main():
         - **数据校验报告**: 数据一致性分析结果
         """)
     
-    # 环境要求
-    with st.expander("🔧 环境要求", expanded=False):
-        st.markdown("""
-        ### 系统要求
-        - **Python**: 3.8 或更高版本
-        - **操作系统**: Windows, macOS, Linux
-        
-        ### 依赖包要求
-        - **streamlit**: >= 1.28.0 (Web应用框架)
-        - **pandas**: >= 1.5.0 (数据处理)
-        - **numpy**: >= 1.20.0 (数值计算)
-        - **openpyxl**: >= 3.0.0 (Excel文件处理)
-        
-        ### 安装方法
-        ```bash
-        # 单独安装
-        pip install streamlit pandas numpy openpyxl
-        
-        # 或者使用requirements.txt
-        pip install -r requirements.txt
-        ```
-        
-        ### 运行应用
-        ```bash
-        streamlit run app.py
-        ```
-        """)
-    
     # 页脚信息
     st.markdown("---")
     st.markdown(
         """
         <div style='text-align: center; color: #666; padding: 20px;'>
-            <h4>📊 完整数据处理工具 - 集成版</h4>
-            <p><strong>功能模块:</strong> DAU合并 + 留存计算 + 底表管理 + 数据校验</p>
-            <p style='margin-top: 20px; font-size: 14px; background-color: #f8f9fa; padding: 10px; border-radius: 5px;'>
-                <strong>🚀 快速安装依赖包:</strong><br>
+            <h4>专业数据处理平台</h4>
+            <p><strong>环境要求:</strong> Python 3.8+ | streamlit | pandas | numpy | openpyxl</p>
+            <p style='margin-top: 15px; font-size: 14px; background-color: #f8f9fa; padding: 10px; border-radius: 5px;'>
+                <strong>安装依赖:</strong> 
                 <code style='background-color: #e9ecef; padding: 2px 6px; border-radius: 3px; color: #495057;'>
                 pip install streamlit pandas numpy openpyxl
                 </code>
