@@ -1,5 +1,5 @@
 """
-完整数据处理工具 - 集成版
+完整数据处理工具 - 优化版
 ========================
 
 环境要求:
@@ -8,12 +8,9 @@
 - pandas >= 1.5.0
 - numpy >= 1.20.0
 - openpyxl >= 3.0.0
+- plotly >= 5.0.0
 
-安装命令:
-pip install streamlit pandas numpy openpyxl
-
-运行命令:
-streamlit run app.py
+安装命令: pip install streamlit pandas numpy openpyxl plotly
 """
 
 import streamlit as st
@@ -23,10 +20,70 @@ import re
 import io
 import numpy as np
 import warnings
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from typing import Dict, List, Optional, Tuple
 
 # 忽略警告
 warnings.filterwarnings('ignore')
+
+# 页面配置
+st.set_page_config(
+    page_title="智能数据处理平台",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# 自定义CSS样式
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        padding: 2rem;
+        border-radius: 10px;
+        margin-bottom: 2rem;
+        text-align: center;
+        color: white;
+    }
+    .feature-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        margin-bottom: 1rem;
+        border-left: 4px solid #667eea;
+    }
+    .metric-card {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        padding: 1rem;
+        border-radius: 8px;
+        text-align: center;
+        margin: 0.5rem 0;
+    }
+    .success-message {
+        background: linear-gradient(90deg, #56ab2f 0%, #a8e6cf 100%);
+        padding: 1rem;
+        border-radius: 8px;
+        color: white;
+        margin: 1rem 0;
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        background-color: #f0f2f6;
+        border-radius: 8px 8px 0 0;
+        padding: 0 20px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #667eea;
+        color: white;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 def convert_date_to_sortable(date_str: str) -> str:
     """将日期字符串转换为可排序的格式"""
@@ -68,6 +125,96 @@ def force_standardize_date(date_str):
 
     return date_str
 
+def create_data_visualization(df, title, chart_type="line"):
+    """创建数据可视化图表"""
+    try:
+        # 检查数据是否为空
+        if df.empty:
+            return None
+            
+        # 获取日期列（通常是第一列）
+        date_col = df.columns[0]
+        
+        # 尝试转换日期格式
+        try:
+            df_viz = df.copy()
+            df_viz[date_col] = pd.to_datetime(df_viz[date_col], errors='coerce')
+            df_viz = df_viz.dropna(subset=[date_col])
+            df_viz = df_viz.sort_values(date_col)
+        except:
+            df_viz = df.copy()
+        
+        # 创建图表
+        if chart_type == "line":
+            # 寻找数值列
+            numeric_cols = df_viz.select_dtypes(include=[np.number]).columns.tolist()
+            
+            if len(numeric_cols) > 0:
+                fig = go.Figure()
+                
+                # 添加多个数值列的线图
+                for col in numeric_cols[:5]:  # 最多显示5条线
+                    fig.add_trace(go.Scatter(
+                        x=df_viz[date_col],
+                        y=df_viz[col],
+                        mode='lines+markers',
+                        name=col,
+                        line=dict(width=2)
+                    ))
+                
+                fig.update_layout(
+                    title=title,
+                    xaxis_title="日期",
+                    yaxis_title="数值",
+                    hovermode='x unified',
+                    height=400,
+                    template="plotly_white"
+                )
+                
+                return fig
+                
+        elif chart_type == "bar":
+            # 创建柱状图
+            if '三端' in df_viz.columns:
+                # 按渠道分组统计
+                numeric_cols = df_viz.select_dtypes(include=[np.number]).columns.tolist()
+                if numeric_cols:
+                    agg_data = df_viz.groupby('三端')[numeric_cols[0]].sum().reset_index()
+                    
+                    fig = px.bar(
+                        agg_data,
+                        x='三端',
+                        y=numeric_cols[0],
+                        title=title,
+                        color='三端',
+                        template="plotly_white"
+                    )
+                    
+                    fig.update_layout(height=400)
+                    return fig
+        
+        elif chart_type == "heatmap":
+            # 创建热力图（如果有足够的数值数据）
+            numeric_cols = df_viz.select_dtypes(include=[np.number]).columns.tolist()
+            if len(numeric_cols) >= 2:
+                corr_matrix = df_viz[numeric_cols].corr()
+                
+                fig = px.imshow(
+                    corr_matrix,
+                    title=f"{title} - 相关性热力图",
+                    color_continuous_scale="RdBu_r",
+                    aspect="auto"
+                )
+                
+                fig.update_layout(height=400)
+                return fig
+                
+    except Exception as e:
+        st.warning(f"图表创建失败: {str(e)}")
+        return None
+    
+    return None
+
 def process_dau_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
     """处理DAU文件上传"""
     if not uploaded_files:
@@ -82,8 +229,6 @@ def process_dau_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
     processed_files = 0
     total_files = len(uploaded_files)
     
-    log_container = st.expander("DAU文件处理详情", expanded=False)
-    
     for i, uploaded_file in enumerate(uploaded_files):
         try:
             progress = (i + 1) / total_files
@@ -93,17 +238,14 @@ def process_dau_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
             filename = uploaded_file.name
             
             if "dau" not in filename.lower():
-                log_container.warning(f"跳过文件 {filename}: 文件名不包含'dau'")
                 continue
             
             # 从文件名中提取渠道信息
             if len(filename) > 7 and filename.startswith("dau_"):
                 channel = filename[4:7]  # 获取渠道名 (mvp, and, ios)
                 if channel not in channel_dfs:
-                    log_container.warning(f"跳过文件 {filename}: 无法识别的渠道 '{channel}'")
                     continue
             else:
-                log_container.warning(f"跳过文件 {filename}: 文件名格式不符合预期")
                 continue
             
             # 读取CSV文件
@@ -116,23 +258,15 @@ def process_dau_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
                     df = pd.read_csv(io.StringIO(content.decode('latin1')), 
                                    na_values=[''], keep_default_na=False)
                 
-                log_container.success(f"成功读取 {filename}, 形状: {df.shape}")
-                
             except Exception as e:
-                log_container.error(f"读取文件 {filename} 失败: {str(e)}")
                 continue
             
             if df.empty:
-                log_container.warning(f"文件 {filename} 不包含数据，已跳过")
                 continue
             
             # 删除指定的三列
             columns_to_drop = ['Total Conversions', 'Re-attribution', 'Re-engagement']
-            original_cols = df.columns.tolist()
             df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
-            removed_cols = [col for col in columns_to_drop if col in original_cols]
-            if removed_cols:
-                log_container.info(f"已删除列: {', '.join(removed_cols)}")
             
             # 从文件名提取日期
             try:
@@ -145,7 +279,6 @@ def process_dau_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
                     formatted_date = date_part
             except:
                 formatted_date = "2025/1/1"
-                log_container.warning(f"无法从文件名 {filename} 提取日期，使用默认值")
             
             # 添加日期列
             df.insert(0, 'date', formatted_date)
@@ -153,7 +286,6 @@ def process_dau_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
             # iOS特殊处理
             if channel == 'ios' and 'Average eCPIUS$2.50' in df.columns:
                 df = df.drop(columns=['Average eCPIUS$2.50'])
-                log_container.info(f"移除iOS中的问题列")
             
             # 列标准化
             if standard_columns[channel] is None:
@@ -178,14 +310,12 @@ def process_dau_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
             processed_files += 1
             
         except Exception as e:
-            log_container.error(f"处理文件 {uploaded_file.name} 时发生错误: {str(e)}")
             continue
     
     progress_bar.progress(1.0)
     status_text.text(f"DAU文件处理完成! 成功处理了 {processed_files} 个文件")
     
     if processed_files == 0:
-        st.error("没有成功处理任何DAU文件")
         return None
     
     # 合并数据
@@ -216,7 +346,7 @@ def process_dau_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
                 merged_df = merged_df.sort_values(by='sort_key')
                 merged_df = merged_df.drop(columns=['sort_key'])
             except Exception as e:
-                st.warning(f"渠道 {channel} 排序时出错: {str(e)}")
+                pass
             
             merged_df = merged_df.fillna('N/A')
             
@@ -272,7 +402,6 @@ def process_retention_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]
     
     progress_bar = st.progress(0)
     status_text = st.empty()
-    log_container = st.expander("留存文件处理详情", expanded=False)
     
     processed_data = {}
     total_files = len(uploaded_files)
@@ -293,7 +422,6 @@ def process_retention_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]
                     break
             
             if not channel:
-                log_container.warning(f"跳过文件 {uploaded_file.name}: 无法识别的留存文件")
                 continue
             
             # 读取文件
@@ -310,13 +438,9 @@ def process_retention_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]
                         continue
                 
                 if df is None:
-                    log_container.error(f"无法读取文件 {uploaded_file.name}")
                     continue
                 
-                log_container.success(f"成功读取 {uploaded_file.name}, 形状: {df.shape}")
-                
             except Exception as e:
-                log_container.error(f"读取文件 {uploaded_file.name} 失败: {str(e)}")
                 continue
             
             # 处理日期列
@@ -329,7 +453,6 @@ def process_retention_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]
                         break
                 
                 if date_column not in df.columns:
-                    log_container.error(f"无法找到日期列")
                     continue
             
             # 排序数据
@@ -340,7 +463,7 @@ def process_retention_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]
                 try:
                     df = df.sort_values(by=date_column)
                 except:
-                    log_container.warning(f"无法排序数据")
+                    pass
             
             # 检查用户列
             users_column = 'Users'
@@ -352,7 +475,6 @@ def process_retention_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]
                         break
                 
                 if users_column not in df.columns:
-                    log_container.error(f"无法找到用户列")
                     continue
             
             # 添加空列
@@ -370,14 +492,10 @@ def process_retention_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]
                 elif alternative_column in df.columns:
                     df[retention_column] = df[alternative_column]
                     df[f'day{day}'] = (df[retention_column] / df[users_column]).round(4)
-                else:
-                    log_container.warning(f"无法计算 day{day} 留存率")
             
             processed_data[channel] = df
-            log_container.success(f"成功处理 {channel} 渠道留存数据")
             
         except Exception as e:
-            log_container.error(f"处理文件 {uploaded_file.name} 时发生错误: {str(e)}")
             continue
     
     progress_bar.progress(1.0)
@@ -435,7 +553,7 @@ def create_integrated_dau(merged_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
             integrated_df = integrated_df.sort_values(by=['sort_key', '渠道排序'])
             integrated_df = integrated_df.drop(columns=['sort_key', '渠道排序'])
         except Exception as e:
-            st.warning(f"整合DAU数据排序时出错: {str(e)}")
+            pass
         
         integrated_df = integrated_df.fillna('N/A')
         
@@ -449,7 +567,6 @@ def create_integrated_dau(merged_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
         return integrated_df
         
     except Exception as e:
-        st.error(f"整合DAU数据时出错: {str(e)}")
         return pd.DataFrame()
 
 def create_integrated_retention(retention_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -528,632 +645,322 @@ def create_integrated_retention(retention_data: Dict[str, pd.DataFrame]) -> pd.D
             integrated_df = integrated_df.sort_values(by=["Cohort Day", "渠道排序"])
             integrated_df = integrated_df.drop(columns=["渠道排序"])
         except Exception as e:
-            st.warning(f"整合留存数据排序时出错: {str(e)}")
+            pass
         
         integrated_df = integrated_df.fillna('N/A')
         
         return integrated_df
         
     except Exception as e:
-        st.error(f"整合留存数据时出错: {str(e)}")
         return pd.DataFrame()
 
-def delete_excel_by_date_interface():
-    """底表日期删除界面"""
-    st.subheader("📅 底表日期删除功能")
+def main():
+    # 主标题
+    st.markdown("""
+    <div class="main-header">
+        <h1>🚀 智能数据处理平台</h1>
+        <p>DAU合并 • 留存计算 • 数据可视化 • 一站式解决方案</p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    # 上传Excel文件
-    uploaded_excel = st.file_uploader(
-        "上传底表Excel文件",
-        type=['xlsx'],
-        help="请上传需要删除日期的Excel底表文件",
-        key="excel_uploader"
-    )
+    # 核心功能区域
+    st.markdown("## 🎯 核心功能")
     
-    if uploaded_excel:
-        st.success(f"已上传文件: {uploaded_excel.name}")
-        
-        # 计算默认日期（今天-2天）
-        from datetime import datetime, timedelta
-        default_date = datetime.now() - timedelta(days=2)
-        default_date_mmdd = default_date.strftime("%m%d")
-        default_date_display = default_date.strftime("%Y/%m/%d")
-        
-        st.info(f"默认截止日期（今天-2天）: {default_date_display}")
-        
-        # 创建两列输入
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**三端DAU截止日期**")
-            dau_date = st.text_input(
-                "格式: MMDD (如: 0601)",
-                value=default_date_mmdd,
-                help="删除该日期及之后的所有DAU数据",
-                key="dau_date"
-            )
-        
-        with col2:
-            st.markdown("**三端留存截止日期**")
-            retention_date = st.text_input(
-                "格式: MMDD (如: 0601)",
-                value="",
-                help="删除该日期及之后的所有留存数据",
-                key="retention_date"
-            )
-        
-        if st.button("🗑️ 执行删除操作", type="primary"):
-            if not retention_date:
-                st.error("请输入三端留存截止日期")
-                return
-            
-            try:
-                # 验证日期格式
-                for date_input, name in [(dau_date, "DAU"), (retention_date, "留存")]:
-                    if len(date_input) != 4 or not date_input.isdigit():
-                        st.error(f"{name}日期格式错误，请输入4位数字")
-                        return
-                
-                # 转换日期格式
-                dau_month, dau_day = dau_date[:2], dau_date[2:]
-                ret_month, ret_day = retention_date[:2], retention_date[2:]
-                
-                dau_cutoff = f"2025/{dau_month}/{dau_day}"
-                ret_cutoff = f"2025/{ret_month}/{ret_day}"
-                
-                # 验证日期有效性
-                pd.to_datetime(dau_cutoff)
-                pd.to_datetime(ret_cutoff)
-                
-                st.info(f"将删除:\n- 三端DAU: {dau_cutoff} 及之后的数据\n- 三端留存: {ret_cutoff} 及之后的数据")
-                
-                with st.spinner("正在处理Excel文件..."):
-                    # 读取Excel文件
-                    excel_content = uploaded_excel.getvalue()
-                    excel_file = pd.ExcelFile(io.BytesIO(excel_content))
-                    
-                    all_sheets_data = {}
-                    target_sheets = ['三端留存', '三端DAU']
-                    
-                    for sheet_name in excel_file.sheet_names:
-                        try:
-                            df = pd.read_excel(io.BytesIO(excel_content), sheet_name=sheet_name)
-                            
-                            if sheet_name not in target_sheets:
-                                all_sheets_data[sheet_name] = df
-                                continue
-                            
-                            # 获取截止日期
-                            cutoff_date_str = dau_cutoff if sheet_name == '三端DAU' else ret_cutoff
-                            
-                            if len(df) == 0:
-                                all_sheets_data[sheet_name] = df
-                                continue
-                            
-                            # 获取第一列作为日期列
-                            date_column = df.columns[0]
-                            
-                            # 过滤有效数据
-                            df_filtered = df.dropna(subset=[date_column]).copy()
-                            
-                            if len(df_filtered) == 0:
-                                all_sheets_data[sheet_name] = pd.DataFrame()
-                                continue
-                            
-                            # 转换日期
-                            df_filtered[date_column] = pd.to_datetime(df_filtered[date_column], errors='coerce')
-                            df_filtered = df_filtered.dropna(subset=[date_column]).copy()
-                            
-                            if len(df_filtered) == 0:
-                                all_sheets_data[sheet_name] = pd.DataFrame()
-                                continue
-                            
-                            # 转换为字符串格式进行比较
-                            df_filtered[date_column] = df_filtered[date_column].dt.strftime('%Y/%m/%d')
-                            
-                            # 删除指定日期及之后的数据
-                            df_final = df_filtered[df_filtered[date_column] < cutoff_date_str].copy()
-                            all_sheets_data[sheet_name] = df_final
-                            
-                        except Exception as e:
-                            st.error(f"处理sheet '{sheet_name}' 时出错: {str(e)}")
-                            all_sheets_data[sheet_name] = pd.DataFrame()
-                    
-                    # 创建新的Excel文件
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        for sheet_name, data in all_sheets_data.items():
-                            data.to_excel(writer, sheet_name=sheet_name, index=False)
-                    
-                    output.seek(0)
-                    
-                    st.success("✅ 删除操作完成!")
-                    
-                    # 显示删除结果统计
-                    st.markdown("### 删除结果统计")
-                    for sheet_name in target_sheets:
-                        if sheet_name in all_sheets_data:
-                            data = all_sheets_data[sheet_name]
-                            cutoff_used = dau_cutoff if sheet_name == '三端DAU' else ret_cutoff
-                            if len(data) > 0:
-                                date_col = data.columns[0]
-                                min_date = data[date_col].min()
-                                max_date = data[date_col].max()
-                                st.write(f"**{sheet_name}**: {len(data)}行 (截止: {cutoff_used}, 日期区间: {min_date} 至 {max_date})")
-                            else:
-                                st.write(f"**{sheet_name}**: 0行 (截止: {cutoff_used})")
-                    
-                    # 提供下载
-                    st.download_button(
-                        label="📥 下载处理后的Excel文件",
-                        data=output.getvalue(),
-                        file_name=f"底表_删除后_{datetime.now().strftime('%m%d')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                
-            except Exception as e:
-                st.error(f"处理过程中发生错误: {str(e)}")
-
-def validate_data_interface():
-    """数据校验界面"""
-    st.subheader("🔍 数据校验功能")
-    
-    # 上传文件
+    # 创建两列布局
     col1, col2 = st.columns(2)
     
     with col1:
-        excel_file = st.file_uploader(
-            "上传底表Excel文件",
-            type=['xlsx'],
-            help="包含三端DAU和三端留存数据的Excel文件",
-            key="validate_excel"
-        )
-    
-    with col2:
-        csv_file = st.file_uploader(
-            "上传retention_all.csv文件",
-            type=['csv'],
-            help="用于对比校验的retention_all.csv文件",
-            key="validate_csv"
-        )
-    
-    if excel_file and csv_file:
-        if st.button("🚀 开始数据校验", type="primary"):
-            with st.spinner("正在进行数据校验..."):
-                try:
-                    # 读取Excel文件
-                    excel_content = excel_file.getvalue()
-                    
-                    # 读取三端DAU数据
-                    dau_df = pd.read_excel(io.BytesIO(excel_content), sheet_name='三端DAU')
-                    
-                    # 读取三端留存数据
-                    retention_df = pd.read_excel(io.BytesIO(excel_content), sheet_name='三端留存')
-                    
-                    # 读取CSV文件
-                    csv_content = csv_file.getvalue()
-                    retention_all_df = pd.read_csv(io.StringIO(csv_content.decode('utf-8')))
-                    
-                    # 处理retention_all数据
-                    def map_app_id_to_platform(app_id):
-                        if app_id == 'com.weather.mjweather':
-                            return 'android'
-                        elif app_id == 'id6720731790':
-                            return 'ios'
-                        elif app_id == 'com.moji.international':
-                            return 'mvp'
-                        else:
-                            return 'unknown'
-                    
-                    # 寻找App Id列
-                    app_id_columns = ['App Id', 'app_id', 'AppId', 'app id']
-                    app_id_col = None
-                    for col in app_id_columns:
-                        if col in retention_all_df.columns:
-                            app_id_col = col
-                            break
-                    
-                    if app_id_col:
-                        retention_all_df['三端'] = retention_all_df[app_id_col].apply(map_app_id_to_platform)
-                    
-                    # 创建数据透视表
-                    st.markdown("### 📊 数据透视表分析")
-                    
-                    # DAU透视表
-                    if not dau_df.empty:
-                        date_col = dau_df.columns[0]
-                        if '三端' in dau_df.columns and 'Installs' in dau_df.columns:
-                            dau_df[date_col] = pd.to_datetime(dau_df[date_col])
-                            dau_pivot = pd.pivot_table(
-                                dau_df,
-                                values='Installs',
-                                index=date_col,
-                                columns='三端',
-                                aggfunc='sum',
-                                fill_value=0
-                            ).sort_index(ascending=False).astype(int)
-                            
-                            st.markdown("**DAU数据透视表 (前10行)**")
-                            st.dataframe(dau_pivot.head(10))
-                    
-                    # 留存透视表
-                    if not retention_df.empty:
-                        date_col = retention_df.columns[0]
-                        if '三端' in retention_df.columns and 'Users' in retention_df.columns:
-                            retention_df[date_col] = pd.to_datetime(retention_df[date_col])
-                            retention_pivot = pd.pivot_table(
-                                retention_df,
-                                values='Users',
-                                index=date_col,
-                                columns='三端',
-                                aggfunc='sum',
-                                fill_value=0
-                            ).sort_index(ascending=False).astype(int)
-                            
-                            st.markdown("**留存数据透视表 (前10行)**")
-                            st.dataframe(retention_pivot.head(10))
-                    
-                    # retention_all透视表
-                    if not retention_all_df.empty and app_id_col:
-                        cohort_col = 'Cohort Day'
-                        if cohort_col in retention_all_df.columns:
-                            # 寻找数值列
-                            exclude_cols = [cohort_col, app_id_col, '三端']
-                            numeric_cols = [col for col in retention_all_df.columns 
-                                          if col not in exclude_cols and pd.api.types.is_numeric_dtype(retention_all_df[col])]
-                            
-                            if numeric_cols:
-                                value_col = numeric_cols[0]
-                                retention_all_df[cohort_col] = pd.to_datetime(retention_all_df[cohort_col])
-                                retention_all_pivot = pd.pivot_table(
-                                    retention_all_df,
-                                    values=value_col,
-                                    index=cohort_col,
-                                    columns='三端',
-                                    aggfunc='sum',
-                                    fill_value=0
-                                ).sort_index(ascending=False).astype(int)
-                                
-                                st.markdown("**Retention_all数据透视表 (前10行)**")
-                                st.dataframe(retention_all_pivot.head(10))
-                                
-                                # 数值对比分析
-                                if 'retention_pivot' in locals():
-                                    st.markdown("### 🔍 数值对比分析")
-                                    
-                                    overlapping_dates = set(retention_pivot.index).intersection(set(retention_all_pivot.index))
-                                    
-                                    if overlapping_dates:
-                                        comparison_data = []
-                                        
-                                        for date in sorted(overlapping_dates, reverse=True)[:10]:  # 显示最近10天
-                                            retention_sum = retention_pivot.loc[date].sum()
-                                            retention_all_sum = retention_all_pivot.loc[date].sum()
-                                            
-                                            if retention_all_sum > 0:
-                                                difference = retention_sum - retention_all_sum
-                                                percentage = (difference / retention_all_sum * 100) if retention_all_sum != 0 else 0
-                                                
-                                                comparison_data.append({
-                                                    '日期': date.strftime('%Y-%m-%d'),
-                                                    '留存总和': retention_sum,
-                                                    'Retention_all总和': retention_all_sum,
-                                                    '差异': difference,
-                                                    '差异百分比': f"{percentage:.2f}%"
-                                                })
-                                        
-                                        if comparison_data:
-                                            comparison_df = pd.DataFrame(comparison_data)
-                                            st.dataframe(comparison_df)
-                                            
-                                            # 统计摘要
-                                            differences = [row['差异'] for row in comparison_data]
-                                            if differences:
-                                                st.markdown("**对比摘要:**")
-                                                st.write(f"- 平均差异: {np.mean(differences):.0f}")
-                                                st.write(f"- 最大差异: {max(differences):.0f}")
-                                                st.write(f"- 最小差异: {min(differences):.0f}")
-                    
-                    st.success("✅ 数据校验完成!")
-                    
-                except Exception as e:
-                    st.error(f"数据校验过程中发生错误: {str(e)}")
-
-def main():
-    st.set_page_config(
-        page_title="日报数据处理工具 - 集成版",
-        page_icon="📊",
-        layout="wide"
-    )
-    
-    st.title("📊 日报数据处理工具 - 集成版")
-    st.markdown("**DAU合并 + 留存率计算 + 底表日期删除 + 数据校验**")
-    
-    # 添加环境要求提醒
-    st.markdown(
-        """
-        <div style='background-color: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #007bff;'>
-            <small>
-            <strong>🔧 环境要求：</strong><br>
-            • Python 3.8+ | Streamlit ≥1.28.0 | Pandas ≥1.5.0 | Numpy ≥1.20.0 | Openpyxl ≥3.0.0<br>
-            • 安装：<code>pip install streamlit pandas numpy openpyxl</code><br>
-            • 运行：<code>streamlit run app.py</code>
-            </small>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    st.markdown("---")
-    
-    # 使用说明
-    with st.expander("📋 使用说明", expanded=True):
         st.markdown("""
-        ### 🎯 功能概述
-        1. **DAU文件合并**: 处理多个DAU CSV文件，按渠道分组合并
-        2. **留存率计算**: 处理留存数据文件，自动计算各天留存率
-        3. **底表日期删除**: 删除Excel底表中指定日期及之后的数据
-        4. **数据校验**: 对比分析底表数据与retention_all.csv数据的一致性
+        <div class="feature-card">
+            <h3>📈 DAU数据处理</h3>
+            <p>• 自动识别渠道文件<br>
+            • 智能数据合并<br>
+            • 实时可视化分析</p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        ### 📁 文件要求
-        **DAU文件命名**: `dau_渠道_日期.csv` (例如: `dau_mvp_3.17.csv`)
-        - 支持渠道: mvp, and, ios
-        
-        **留存文件命名**: 
-        - `retention_ios.csv` (iOS渠道)
-        - `retention_ios_formal.csv` (iOS正式渠道)
-        - `retention_mvp.csv` (MVP渠道)
-        - `retention_and.csv` (Android渠道)
-        
-        **底表文件**: Excel格式，包含"三端DAU"和"三端留存"工作表
-        
-        ### 📤 输出文件
-        - **三端DAU汇总文件**: 包含所有渠道DAU数据
-        - **三端留存汇总文件**: 包含所有渠道留存数据
-        - **各渠道单独文件**: DAU和留存的分渠道文件
-        - **处理后底表**: 删除指定日期后的Excel文件
-        - **数据校验报告**: 数据一致性分析结果
-        """)
-    
-    # 创建四个标签页
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 DAU文件处理", "🔄 留存文件处理", "📅 底表日期删除", "🔍 数据校验"])
-    
-    # 存储处理结果
-    if 'dau_results' not in st.session_state:
-        st.session_state.dau_results = None
-    if 'retention_results' not in st.session_state:
-        st.session_state.retention_results = None
-    
-    # DAU文件处理标签页
-    with tab1:
-        st.subheader("📁 上传DAU文件")
+        # DAU文件上传
         dau_files = st.file_uploader(
-            "选择DAU CSV文件",
+            "拖入DAU文件 (支持多选)",
             type=['csv'],
             accept_multiple_files=True,
-            help="文件名格式: dau_渠道_日期.csv",
+            help="文件格式: dau_渠道_日期.csv",
             key="dau_uploader"
         )
         
         if dau_files:
-            st.success(f"已选择 {len(dau_files)} 个DAU文件")
+            st.success(f"✅ 已选择 {len(dau_files)} 个DAU文件")
             
-            if st.button("🚀 处理DAU文件", type="primary", key="process_dau"):
-                with st.spinner("正在处理DAU文件..."):
+            if st.button("🚀 开始处理DAU数据", type="primary", key="process_dau"):
+                with st.spinner("🔄 智能处理中..."):
                     st.session_state.dau_results = process_dau_files(dau_files)
                 
                 if st.session_state.dau_results:
-                    st.success("✅ DAU文件处理完成!")
+                    st.markdown("""
+                    <div class="success-message">
+                        ✨ DAU数据处理完成！已生成可视化图表和分析报告
+                    </div>
+                    """, unsafe_allow_html=True)
     
-    # 留存文件处理标签页
-    with tab2:
-        st.subheader("📁 上传留存文件")
+    with col2:
+        st.markdown("""
+        <div class="feature-card">
+            <h3>🔄 留存数据处理</h3>
+            <p>• 自动计算留存率<br>
+            • 多渠道数据整合<br>
+            • 趋势分析可视化</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 留存文件上传
         retention_files = st.file_uploader(
-            "选择留存CSV文件",
+            "拖入留存文件 (支持多选)",
             type=['csv'],
             accept_multiple_files=True,
-            help="文件名格式: retention_渠道.csv",
+            help="文件格式: retention_渠道.csv",
             key="retention_uploader"
         )
         
         if retention_files:
-            st.success(f"已选择 {len(retention_files)} 个留存文件")
+            st.success(f"✅ 已选择 {len(retention_files)} 个留存文件")
             
-            if st.button("🚀 处理留存文件", type="primary", key="process_retention"):
-                with st.spinner("正在处理留存文件..."):
+            if st.button("🚀 开始处理留存数据", type="primary", key="process_retention"):
+                with st.spinner("🔄 智能处理中..."):
                     st.session_state.retention_results = process_retention_files(retention_files)
                 
                 if st.session_state.retention_results:
-                    st.success("✅ 留存文件处理完成!")
+                    st.markdown("""
+                    <div class="success-message">
+                        ✨ 留存数据处理完成！已生成留存率分析和趋势图表
+                    </div>
+                    """, unsafe_allow_html=True)
     
-    # 底表日期删除标签页
-    with tab3:
-        delete_excel_by_date_interface()
-    
-    # 数据校验标签页
-    with tab4:
-        validate_data_interface()
-    
-    # 如果有DAU或留存处理结果，显示数据预览和下载选项
-    if st.session_state.dau_results or st.session_state.retention_results:
+    # 数据可视化和结果展示
+    if 'dau_results' in st.session_state and st.session_state.dau_results:
         st.markdown("---")
-        st.subheader("📊 文件处理结果")
+        st.markdown("## 📊 DAU数据分析")
         
-        # 创建结果标签页
-        result_tabs = []
-        if st.session_state.dau_results:
-            result_tabs.append("📈 DAU数据")
-        if st.session_state.retention_results:
-            result_tabs.append("🔄 留存数据")
+        # 创建整合数据
+        integrated_dau = create_integrated_dau(st.session_state.dau_results)
         
-        if result_tabs:
-            tabs = st.tabs(result_tabs)
-            tab_index = 0
+        if not integrated_dau.empty:
+            # 数据统计卡片
+            metric_cols = st.columns(4)
+            with metric_cols[0]:
+                st.markdown("""
+                <div class="metric-card">
+                    <h3>{}</h3>
+                    <p>处理渠道数</p>
+                </div>
+                """.format(len(st.session_state.dau_results)), unsafe_allow_html=True)
             
-            # DAU结果显示
-            if st.session_state.dau_results:
-                with tabs[tab_index]:
-                    dau_data = st.session_state.dau_results
-                    
-                    # 创建整合的DAU数据
-                    integrated_dau = create_integrated_dau(dau_data)
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("处理渠道数", len(dau_data))
-                    with col2:
-                        total_rows = sum(len(df) for df in dau_data.values())
-                        st.metric("总数据行数", total_rows)
-                    with col3:
-                        if not integrated_dau.empty:
-                            st.metric("整合后行数", len(integrated_dau))
-                    
-                    # 数据预览
-                    preview_tabs = st.tabs(["🎯 三端DAU汇总"] + [f"{ch.upper()}渠道" for ch in dau_data.keys()])
-                    
-                    # 三端汇总预览
-                    with preview_tabs[0]:
-                        if not integrated_dau.empty:
-                            st.dataframe(integrated_dau.head(10), use_container_width=True)
-                        else:
-                            st.error("无法创建三端DAU汇总数据")
-                    
-                    # 各渠道预览
-                    for i, (channel, df) in enumerate(dau_data.items()):
-                        with preview_tabs[i + 1]:
-                            st.dataframe(df.head(10), use_container_width=True)
-                
-                tab_index += 1
+            with metric_cols[1]:
+                total_rows = sum(len(df) for df in st.session_state.dau_results.values())
+                st.markdown("""
+                <div class="metric-card">
+                    <h3>{}</h3>
+                    <p>总数据行数</p>
+                </div>
+                """.format(total_rows), unsafe_allow_html=True)
             
-            # 留存结果显示
-            if st.session_state.retention_results:
-                with tabs[tab_index]:
-                    retention_data = st.session_state.retention_results
-                    
-                    # 创建整合的留存数据
-                    integrated_retention = create_integrated_retention(retention_data)
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("处理渠道数", len(retention_data))
-                    with col2:
-                        total_rows = sum(len(df) for df in retention_data.values())
-                        st.metric("总数据行数", total_rows)
-                    with col3:
-                        if not integrated_retention.empty:
-                            st.metric("整合后行数", len(integrated_retention))
-                    
-                    # 数据预览
-                    preview_tabs = st.tabs(["🎯 三端留存汇总"] + [f"{ch.upper()}渠道" for ch in retention_data.keys()])
-                    
-                    # 三端汇总预览
-                    with preview_tabs[0]:
-                        if not integrated_retention.empty:
-                            st.dataframe(integrated_retention.head(10), use_container_width=True)
-                        else:
-                            st.error("无法创建三端留存汇总数据")
-                    
-                    # 各渠道预览
-                    for i, (channel, df) in enumerate(retention_data.items()):
-                        with preview_tabs[i + 1]:
-                            st.dataframe(df.head(10), use_container_width=True)
-        
-        # 下载区域
-        st.markdown("---")
-        st.subheader("💾 下载处理后的文件")
-        
-        today = datetime.datetime.now().strftime("%m.%d")
-        
-        # 主要下载选项
-        st.markdown("### 🎯 **汇总文件下载**")
-        
-        download_cols = st.columns(2)
-        
-        # DAU汇总下载
-        if st.session_state.dau_results:
-            with download_cols[0]:
-                integrated_dau = create_integrated_dau(st.session_state.dau_results)
-                if not integrated_dau.empty:
-                    # 使用UTF-8 BOM编码确保中文正确显示
-                    csv_data = integrated_dau.to_csv(index=False, encoding='utf-8-sig')
-                    st.download_button(
-                        label="📈 下载三端DAU汇总文件",
-                        data=csv_data.encode('utf-8-sig'),
-                        file_name=f"{today} 三端dau汇总.csv",
-                        mime="text/csv",
-                        type="primary"
-                    )
-                    st.success(f"✅ {len(integrated_dau)} 行DAU数据")
-                else:
-                    st.error("❌ DAU汇总数据生成失败")
-        
-        # 留存汇总下载
-        if st.session_state.retention_results:
-            with download_cols[1]:
-                integrated_retention = create_integrated_retention(st.session_state.retention_results)
-                if not integrated_retention.empty:
-                    # 使用UTF-8 BOM编码确保中文正确显示
-                    csv_data = integrated_retention.to_csv(index=False, encoding='utf-8-sig')
-                    st.download_button(
-                        label="🔄 下载三端留存汇总文件",
-                        data=csv_data.encode('utf-8-sig'),
-                        file_name=f"{today} 三端留存汇总.csv",
-                        mime="text/csv",
-                        type="primary"
-                    )
-                    st.success(f"✅ {len(integrated_retention)} 行留存数据")
-                else:
-                    st.error("❌ 留存汇总数据生成失败")
-        
-        # 分渠道文件下载
-        st.markdown("### 📁 **分渠道文件下载**")
-        
-        # DAU分渠道下载
-        if st.session_state.dau_results:
-            st.markdown("**DAU分渠道文件:**")
-            dau_cols = st.columns(len(st.session_state.dau_results))
+            with metric_cols[2]:
+                st.markdown("""
+                <div class="metric-card">
+                    <h3>{}</h3>
+                    <p>整合后行数</p>
+                </div>
+                """.format(len(integrated_dau)), unsafe_allow_html=True)
+            
+            with metric_cols[3]:
+                if 'Installs' in integrated_dau.columns:
+                    total_installs = integrated_dau['Installs'].replace('N/A', 0).astype(str).str.replace(',', '').astype(float).sum()
+                    st.markdown("""
+                    <div class="metric-card">
+                        <h3>{:,.0f}</h3>
+                        <p>总安装量</p>
+                    </div>
+                    """.format(total_installs), unsafe_allow_html=True)
+            
+            # 可视化图表
+            viz_cols = st.columns(2)
+            
+            with viz_cols[0]:
+                # 趋势图
+                fig_line = create_data_visualization(integrated_dau, "DAU数据趋势分析", "line")
+                if fig_line:
+                    st.plotly_chart(fig_line, use_container_width=True)
+            
+            with viz_cols[1]:
+                # 渠道对比图
+                fig_bar = create_data_visualization(integrated_dau, "渠道数据对比", "bar")
+                if fig_bar:
+                    st.plotly_chart(fig_bar, use_container_width=True)
+            
+            # 数据预览
+            st.markdown("### 📋 数据预览")
+            preview_tabs = st.tabs(["🎯 三端DAU汇总"] + [f"{ch.upper()}渠道" for ch in st.session_state.dau_results.keys()])
+            
+            with preview_tabs[0]:
+                st.dataframe(integrated_dau.head(15), use_container_width=True)
+            
             for i, (channel, df) in enumerate(st.session_state.dau_results.items()):
-                with dau_cols[i]:
-                    # 使用UTF-8 BOM编码确保中文正确显示
+                with preview_tabs[i + 1]:
+                    st.dataframe(df.head(15), use_container_width=True)
+            
+            # 下载按钮
+            st.markdown("### 💾 下载数据")
+            download_cols = st.columns(3)
+            
+            today = datetime.datetime.now().strftime("%m.%d")
+            
+            with download_cols[0]:
+                csv_data = integrated_dau.to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="📥 下载三端DAU汇总",
+                    data=csv_data.encode('utf-8-sig'),
+                    file_name=f"{today} 三端dau汇总.csv",
+                    mime="text/csv",
+                    type="primary"
+                )
+            
+            # 分渠道下载
+            for i, (channel, df) in enumerate(st.session_state.dau_results.items()):
+                col_idx = (i + 1) % 3
+                with download_cols[col_idx]:
                     csv_data = df.to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(
-                        label=f"📈 DAU-{channel.upper()}",
+                        label=f"📥 {channel.upper()}渠道",
                         data=csv_data.encode('utf-8-sig'),
-                        file_name=f"{today} dau汇总_{channel}.csv",
+                        file_name=f"{today} dau_{channel}.csv",
                         mime="text/csv",
                         key=f"dau_{channel}"
                     )
-                    st.text(f"{len(df)} 行数据")
+    
+    # 留存数据可视化
+    if 'retention_results' in st.session_state and st.session_state.retention_results:
+        st.markdown("---")
+        st.markdown("## 🔄 留存数据分析")
         
-        # 留存分渠道下载
-        if st.session_state.retention_results:
-            st.markdown("**留存分渠道文件:**")
-            retention_cols = st.columns(len(st.session_state.retention_results))
+        # 创建整合数据
+        integrated_retention = create_integrated_retention(st.session_state.retention_results)
+        
+        if not integrated_retention.empty:
+            # 留存率趋势图
+            retention_viz_cols = st.columns(2)
+            
+            with retention_viz_cols[0]:
+                # 留存率趋势
+                fig_retention = create_data_visualization(integrated_retention, "留存率趋势分析", "line")
+                if fig_retention:
+                    st.plotly_chart(fig_retention, use_container_width=True)
+            
+            with retention_viz_cols[1]:
+                # 渠道留存对比
+                fig_retention_bar = create_data_visualization(integrated_retention, "渠道留存对比", "bar")
+                if fig_retention_bar:
+                    st.plotly_chart(fig_retention_bar, use_container_width=True)
+            
+            # 留存数据预览
+            st.markdown("### 📋 留存数据预览")
+            retention_preview_tabs = st.tabs(["🎯 三端留存汇总"] + [f"{ch.upper()}渠道" for ch in st.session_state.retention_results.keys()])
+            
+            with retention_preview_tabs[0]:
+                st.dataframe(integrated_retention.head(15), use_container_width=True)
+            
             for i, (channel, df) in enumerate(st.session_state.retention_results.items()):
-                with retention_cols[i]:
-                    # 使用UTF-8 BOM编码确保中文正确显示
+                with retention_preview_tabs[i + 1]:
+                    st.dataframe(df.head(15), use_container_width=True)
+            
+            # 留存数据下载
+            st.markdown("### 💾 下载留存数据")
+            retention_download_cols = st.columns(3)
+            
+            with retention_download_cols[0]:
+                csv_data = integrated_retention.to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="📥 下载三端留存汇总",
+                    data=csv_data.encode('utf-8-sig'),
+                    file_name=f"{today} 三端留存汇总.csv",
+                    mime="text/csv",
+                    type="primary",
+                    key="retention_integrated"
+                )
+            
+            # 分渠道下载
+            for i, (channel, df) in enumerate(st.session_state.retention_results.items()):
+                col_idx = (i + 1) % 3
+                with retention_download_cols[col_idx]:
                     csv_data = df.to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(
-                        label=f"🔄 留存-{channel.upper()}",
+                        label=f"📥 {channel.upper()}留存",
                         data=csv_data.encode('utf-8-sig'),
                         file_name=f"{today} 留存_{channel}.csv",
                         mime="text/csv",
                         key=f"retention_{channel}"
                     )
-                    st.text(f"{len(df)} 行数据")
     
-    else:
-        st.info("👆 请选择相应的标签页开始处理数据")
+    # 高级功能区域
+    if not ('dau_results' in st.session_state and st.session_state.dau_results) and not ('retention_results' in st.session_state and st.session_state.retention_results):
+        st.markdown("---")
+        st.markdown("## 🎯 开始使用")
+        st.info("👆 请在上方拖入您的数据文件开始处理，系统将自动生成可视化分析报告")
+    
+    # 功能说明（折叠显示）
+    with st.expander("📋 详细功能说明", expanded=False):
+        st.markdown("""
+        ### 🎯 核心功能
+        
+        **📈 DAU数据处理**
+        - 自动识别文件格式：`dau_渠道_日期.csv`
+        - 支持渠道：MVP、Android、iOS
+        - 智能数据清洗和标准化
+        - 自动生成趋势分析图表
+        
+        **🔄 留存数据处理**
+        - 自动计算1-7日、14日、30日留存率
+        - 支持多渠道数据整合
+        - 生成留存率趋势可视化
+        - 渠道间对比分析
+        
+        **📊 数据可视化**
+        - 实时生成交互式图表
+        - 多维度数据分析
+        - 趋势预测和洞察
+        - 支持数据导出
+        
+        ### 📁 文件格式要求
+        
+        **DAU文件**：`dau_mvp_3.17.csv`、`dau_and_3.18.csv`、`dau_ios_3.19.csv`
+        
+        **留存文件**：`retention_mvp.csv`、`retention_and.csv`、`retention_ios.csv`
+        
+        ### 🚀 快速开始
+        1. 拖入文件到对应上传区域
+        2. 点击"开始处理"按钮
+        3. 查看自动生成的可视化分析
+        4. 下载处理后的数据文件
+        
+        ### 💡 技术特性
+        - 智能编码识别，支持中文文件
+        - 自动数据类型推断
+        - 异常数据处理和修复
+        - 高性能数据处理引擎
+        """)
     
     # 页脚
     st.markdown("---")
-    st.markdown(
-        """
-        <div style='text-align: center; color: #666;'>
-            <p>完整数据处理工具 - 集成版 | DAU合并 + 留存计算 + 底表管理 + 数据校验</p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    st.markdown("""
+    <div style='text-align: center; color: #666; padding: 2rem;'>
+        <p><strong>🚀 智能数据处理平台</strong> | 让数据分析更简单高效</p>
+        <small>支持DAU合并 • 留存计算 • 数据可视化 • 一键导出</small>
+    </div>
+    """, unsafe_allow_html=True)
+
+# 初始化session state
+if 'dau_results' not in st.session_state:
+    st.session_state.dau_results = None
+if 'retention_results' not in st.session_state:
+    st.session_state.retention_results = None
 
 if __name__ == "__main__":
     main()
