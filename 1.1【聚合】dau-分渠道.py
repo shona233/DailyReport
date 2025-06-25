@@ -1,353 +1,358 @@
+import streamlit as st
 import pandas as pd
-import os
-import glob
 import datetime
-import sys
 import re
-from openpyxl import load_workbook
+import io
+import zipfile
+from typing import Dict, List, Optional
 
-
-def merge_csv_files(input_dir="/Users/shuo.yuan/Downloads",
-                    output_prefix="dau汇总"):
-    """
-    合并多个CSV文件并按渠道分组保存，保留原始N/A值
-
-    参数:
-    input_dir (str): 包含CSV文件的目录，默认为用户下载文件夹
-    output_prefix (str): 输出文件前缀，默认为"dau汇总"
-    """
-    print("=" * 50)
-    print("CSV文件合并工具 - 开始处理")
-    print("=" * 50)
-
-    # 验证步骤1: 检查输入目录是否存在
+def convert_date_to_sortable(date_str: str) -> str:
+    """将日期字符串转换为可排序的格式"""
     try:
-        if not os.path.exists(input_dir):
-            print(f"错误: 指定的目录不存在: {input_dir}")
-            return None
-        print(f"✓ 步骤1: 成功验证输入目录: {input_dir}")
-    except Exception as e:
-        print(f"错误: 验证输入目录时出错: {str(e)}")
-        return None
+        parts = date_str.split('/')
+        if len(parts) == 3:
+            year, month, day = parts
+            month = month.zfill(2)
+            day = day.zfill(2)
+            return f"{year}{month}{day}"
+    except:
+        pass
+    return date_str
 
-    # 获取当前日期作为文件名的一部分
-    today = datetime.datetime.now().strftime("%m.%d")
-    output_base = f"{today} {output_prefix}"
-
-    # 获取目录中所有CSV文件
-    try:
-        csv_files = glob.glob(os.path.join(input_dir, '*.csv'))
-
-        if not csv_files:
-            print(f"警告: 指定目录中未找到CSV文件: {input_dir}")
-            return None
-
-        print(f"✓ 步骤2: 找到{len(csv_files)}个CSV文件")
-    except Exception as e:
-        print(f"错误: 查找CSV文件时出错: {str(e)}")
-        return None
-
-    # 创建一个字典来存储每个渠道的DataFrame列表
+def process_uploaded_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
+    """处理上传的CSV文件"""
+    
+    # 创建进度条
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    # 存储每个渠道的DataFrame列表
     channel_dfs = {'mvp': [], 'and': [], 'ios': []}
-
-    # 为每个渠道存储标准列名
-    standard_columns = {
-        'mvp': None,
-        'and': None,
-        'ios': None
-    }
-
+    standard_columns = {'mvp': None, 'and': None, 'ios': None}
+    
     processed_files = 0
-
-    # 验证步骤3: 读取和处理每个CSV文件
-    print("\n正在处理文件...")
-    for file in csv_files:
+    total_files = len(uploaded_files)
+    
+    # 创建详细日志容器
+    log_container = st.expander("处理详情", expanded=False)
+    
+    for i, uploaded_file in enumerate(uploaded_files):
         try:
+            # 更新进度
+            progress = (i + 1) / total_files
+            progress_bar.progress(progress)
+            status_text.text(f"正在处理: {uploaded_file.name} ({i+1}/{total_files})")
+            
+            filename = uploaded_file.name
+            
             # 检查文件名是否包含"dau"
-            if "dau" not in os.path.basename(file).lower():
+            if "dau" not in filename.lower():
+                log_container.warning(f"跳过文件 {filename}: 文件名不包含'dau'")
                 continue
-
-            filename = os.path.basename(file)
-            print(f"\n处理文件: {filename}")
-
+            
             # 从文件名中提取渠道信息
             if len(filename) > 7 and filename.startswith("dau_"):
                 channel = filename[4:7]  # 获取渠道名 (mvp, and, ios)
                 if channel not in channel_dfs:
-                    print(f"  - 警告: 无法识别的渠道 '{channel}'，已跳过")
+                    log_container.warning(f"跳过文件 {filename}: 无法识别的渠道 '{channel}'")
                     continue
             else:
-                print(f"  - 警告: 文件名 {filename} 格式不符合预期，已跳过")
+                log_container.warning(f"跳过文件 {filename}: 文件名格式不符合预期")
                 continue
-
-            # 尝试检测编码并保留N/A值
+            
+            # 读取CSV文件
             try:
-                # 使用na_values和keep_default_na参数来保留原始的"N/A"字符串
-                df = pd.read_csv(file, encoding='utf-8', na_values=[''], keep_default_na=False)
-                print(f"  - 使用UTF-8编码成功读取")
-            except UnicodeDecodeError:
+                # 尝试不同的编码
+                content = uploaded_file.getvalue()
                 try:
-                    df = pd.read_csv(file, encoding='latin1', na_values=[''], keep_default_na=False)
-                    print(f"  - 使用Latin-1编码成功读取")
-                except Exception:
-                    print(f"  - 错误: 无法使用UTF-8或Latin-1编码读取文件")
-                    continue
-
+                    df = pd.read_csv(io.StringIO(content.decode('utf-8')), 
+                                   na_values=[''], keep_default_na=False)
+                except UnicodeDecodeError:
+                    df = pd.read_csv(io.StringIO(content.decode('latin1')), 
+                                   na_values=[''], keep_default_na=False)
+                
+                log_container.success(f"成功读取 {filename}, 形状: {df.shape}")
+                
+            except Exception as e:
+                log_container.error(f"读取文件 {filename} 失败: {str(e)}")
+                continue
+            
             # 验证数据不为空
             if df.empty:
-                print(f"  - 警告: 文件 {filename} 不包含数据，已跳过")
+                log_container.warning(f"文件 {filename} 不包含数据，已跳过")
                 continue
-
-            print(f"  - 原始数据形状: {df.shape}")
-
-            # 打印列名，用于调试
-            print(f"  - 列名: {', '.join(df.columns.tolist())}")
-
+            
             # 删除指定的三列（如果存在）
             columns_to_drop = ['Total Conversions', 'Re-attribution', 'Re-engagement']
             original_cols = df.columns.tolist()
             df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
             removed_cols = [col for col in columns_to_drop if col in original_cols]
             if removed_cols:
-                print(f"  - 已删除列: {', '.join(removed_cols)}")
-
-            # 从文件名提取日期部分并格式化为 2025/3/17 格式
+                log_container.info(f"已删除列: {', '.join(removed_cols)}")
+            
+            # 从文件名提取日期部分并格式化
             try:
                 date_part = filename.split('_')[-1].replace('.csv', '')
-                # 提取月份和日期
                 match = re.search(r'(\d+)\.(\d+)', date_part)
                 if match:
                     month, day = match.groups()
-                    formatted_date = f"2025/{month}/{day}"  # 使用2025年作为固定年份
+                    formatted_date = f"2025/{month}/{day}"
                 else:
                     formatted_date = date_part
-                print(f"  - 提取的日期: {formatted_date}")
             except:
-                formatted_date = "2025/1/1"  # 默认日期
-                print(f"  - 警告: 无法从文件名提取日期，使用默认值 '{formatted_date}'")
-
+                formatted_date = "2025/1/1"
+                log_container.warning(f"无法从文件名 {filename} 提取日期，使用默认值")
+            
             # 添加日期列到DataFrame的最前面
-            df.insert(0, 'date', formatted_date)  # 使用小写'date'作为列名
-
+            df.insert(0, 'date', formatted_date)
+            
             # 如果是iOS渠道且发现有问题的列
             if channel == 'ios' and 'Average eCPIUS$2.50' in df.columns:
-                print(f"  - 发现有问题的列 'Average eCPIUS$2.50'，将被移除")
                 df = df.drop(columns=['Average eCPIUS$2.50'])
-
-            # 列标准化：确保每个渠道的数据使用一致的列名
+                log_container.info(f"移除iOS中的问题列: 'Average eCPIUS$2.50'")
+            
+            # 列标准化
             if standard_columns[channel] is None:
-                # 第一次遇到该渠道的数据，设置为标准列
                 standard_columns[channel] = df.columns.tolist()
-                print(f"  - 设置 {channel} 渠道的标准列为: {', '.join(standard_columns[channel])}")
+                log_container.info(f"设置 {channel} 渠道的标准列")
             else:
-                # 检查列名是否与之前的一致
                 current_cols = df.columns.tolist()
                 if current_cols != standard_columns[channel]:
-                    print(f"  - 警告: 列名与标准不一致")
-                    print(f"    标准列: {', '.join(standard_columns[channel])}")
-                    print(f"    当前列: {', '.join(current_cols)}")
-
-                    # 调整列名以匹配标准列（仅保留标准列中存在的列）
+                    # 调整列名以匹配标准列
                     missing_cols = [col for col in standard_columns[channel] if col not in current_cols]
                     extra_cols = [col for col in current_cols if col not in standard_columns[channel]]
-
+                    
                     if missing_cols:
-                        print(f"    缺少的列: {', '.join(missing_cols)}")
-                        # 为缺少的列添加NaN值
                         for col in missing_cols:
                             df[col] = 'N/A'
-
+                        log_container.info(f"添加缺少的列: {', '.join(missing_cols)}")
+                    
                     if extra_cols:
-                        print(f"    多余的列: {', '.join(extra_cols)}")
-                        # 移除多余的列
                         df = df.drop(columns=extra_cols)
-
+                        log_container.info(f"移除多余的列: {', '.join(extra_cols)}")
+                    
                     # 确保列顺序一致
                     df = df[standard_columns[channel]]
-
-            # 将真正的空值转换为"N/A"
+            
+            # 将空值转换为"N/A"
             df = df.fillna('N/A')
-
-            # 根据渠道分组
+            
+            # 添加到对应渠道
             channel_dfs[channel].append(df)
-            print(f"  - 成功处理: 形状 {df.shape}, 渠道: {channel}")
             processed_files += 1
-
+            
         except Exception as e:
-            print(f"  - 错误: 处理文件 {file} 时失败: {str(e)}")
-            # 打印详细的错误跟踪信息
-            import traceback
-            print(traceback.format_exc())
-
+            log_container.error(f"处理文件 {uploaded_file.name} 时发生错误: {str(e)}")
+            continue
+    
+    # 完成进度
+    progress_bar.progress(1.0)
+    status_text.text(f"处理完成! 成功处理了 {processed_files} 个文件")
+    
     if processed_files == 0:
-        print("\n错误: 没有成功处理任何文件")
+        st.error("没有成功处理任何文件")
         return None
-
-    print(f"\n✓ 步骤3: 成功处理了 {processed_files} 个文件")
-
-    # 验证步骤4: 合并数据并按日期排序
-    print("\n开始合并数据并按日期排序...")
-
-    # 创建一个字典来存储每个渠道的合并DataFrame
+    
+    # 合并数据并按日期排序
     merged_by_channel = {}
-    total_rows = 0
-
-    # 日期转换函数 - 用于排序
-    def convert_date_to_sortable(date_str):
-        try:
-            # 预期格式为 "2025/3/17"
-            parts = date_str.split('/')
-            if len(parts) == 3:
-                year, month, day = parts
-                # 确保月份和日期都是两位数
-                month = month.zfill(2)
-                day = day.zfill(2)
-                # 返回排序键
-                return f"{year}{month}{day}"
-        except:
-            pass
-        # 如果无法解析，返回原始字符串
-        return date_str
-
-    # 合并每个渠道的数据
+    
     for channel, df_list in channel_dfs.items():
-        try:
-            if df_list:
-                print(f"\n处理渠道: {channel}")
-                print(f"  - 找到 {len(df_list)} 个文件属于此渠道")
-
-                # 检查所有DataFrame的列是否一致
-                column_sets = [set(df.columns) for df in df_list]
-                all_same = all(cols == column_sets[0] for cols in column_sets)
-
-                if not all_same:
-                    print(f"  - 警告: 该渠道中的文件列名不一致")
-                    # 使用第一个文件的列作为标准
-                    standard_cols = list(df_list[0].columns)
-                    print(f"  - 使用标准列: {', '.join(standard_cols)}")
-
-                    # 确保所有DataFrame都有相同的列
-                    for i, df in enumerate(df_list):
-                        if set(df.columns) != set(standard_cols):
-                            missing = [col for col in standard_cols if col not in df.columns]
-                            extra = [col for col in df.columns if col not in standard_cols]
-
-                            # 添加缺失的列
-                            for col in missing:
-                                df[col] = 'N/A'
-
-                            # 删除多余的列
-                            if extra:
-                                df = df.drop(columns=extra)
-
-                            # 重新排序列
-                            df = df[standard_cols]
-                            df_list[i] = df
-
-                # 合并该渠道的所有DataFrame
-                merged_df = pd.concat(df_list, ignore_index=True)
-                row_count = len(merged_df)
-                print(f"  - 合并后形状: {merged_df.shape}")
-                print(f"  - 合并后列名: {', '.join(merged_df.columns.tolist())}")
-
-                # 按日期排序
-                try:
-                    # 创建一个临时列用于排序
-                    merged_df['sort_key'] = merged_df['date'].apply(convert_date_to_sortable)
-
-                    # 按排序键排序
-                    merged_df = merged_df.sort_values(by='sort_key')
-
-                    # 删除临时排序列
-                    merged_df = merged_df.drop(columns=['sort_key'])
-
-                    print(f"  - 已按日期排序数据")
-                except Exception as e:
-                    print(f"  - 警告: 排序时出错: {str(e)}")
-
-                # 确保任何新生成的空值转换为N/A
-                merged_df = merged_df.fillna('N/A')
-
-                # 特殊处理iOS渠道，确保没有多余的列
-                if channel == 'ios':
-                    expected_columns = ['date', 'Country', 'Impressions', 'Clicks', 'Installs', 'Conversion Rate',
-                                        'Activity Sessions', 'Cost', 'Activity Revenue', 'Average eCPIUS$2.31',
-                                        'Average DAU', 'Average MAU', 'Average DAU/MAU Rate', 'ARPDAU']
-
-                    # 检查是否有预期之外的列
-                    extra_columns = [col for col in merged_df.columns if col not in expected_columns]
-                    if extra_columns:
-                        print(f"  - 移除iOS中的多余列: {', '.join(extra_columns)}")
-                        merged_df = merged_df.drop(columns=extra_columns)
-
-                    # 检查是否缺少预期的列
-                    missing_columns = [col for col in expected_columns if col not in merged_df.columns]
-                    if missing_columns:
-                        print(f"  - iOS数据缺少列: {', '.join(missing_columns)}")
-                        for col in missing_columns:
-                            merged_df[col] = 'N/A'
-
-                    # 确保列顺序一致
-                    merged_df = merged_df[expected_columns]
-
-                merged_by_channel[channel] = merged_df
-
-                # 保存到子文件
-                channel_output = os.path.join(input_dir, f"{output_base}_{channel}.csv")
-                merged_df.to_csv(channel_output, index=False, encoding='utf-8')
-                print(f"  - 已保存到: {channel_output}")
-                print(f"  - 行数: {len(merged_df)}")
-
-                total_rows += len(merged_df)
-        except Exception as e:
-            print(f"  - 错误: 处理渠道 {channel} 时失败: {str(e)}")
-            # 打印详细的错误跟踪信息
-            import traceback
-            print(traceback.format_exc())
-
-    if not merged_by_channel:
-        print("\n错误: 没有成功合并任何数据")
-        return None
-
-    print(f"\n✓ 步骤4: 成功合并了 {len(merged_by_channel)} 个渠道的数据")
-    print("\n" + "=" * 50)
-    print("处理完成!")
-    print("=" * 50)
-
+        if df_list:
+            st.info(f"正在合并渠道 {channel} 的 {len(df_list)} 个文件...")
+            
+            # 确保所有DataFrame都有相同的列
+            if len(df_list) > 1:
+                standard_cols = list(df_list[0].columns)
+                for i, df in enumerate(df_list):
+                    if set(df.columns) != set(standard_cols):
+                        missing = [col for col in standard_cols if col not in df.columns]
+                        extra = [col for col in df.columns if col not in standard_cols]
+                        
+                        for col in missing:
+                            df[col] = 'N/A'
+                        if extra:
+                            df = df.drop(columns=extra)
+                        df = df[standard_cols]
+                        df_list[i] = df
+            
+            # 合并该渠道的所有DataFrame
+            merged_df = pd.concat(df_list, ignore_index=True)
+            
+            # 按日期排序
+            try:
+                merged_df['sort_key'] = merged_df['date'].apply(convert_date_to_sortable)
+                merged_df = merged_df.sort_values(by='sort_key')
+                merged_df = merged_df.drop(columns=['sort_key'])
+            except Exception as e:
+                st.warning(f"渠道 {channel} 排序时出错: {str(e)}")
+            
+            # 确保空值转换为N/A
+            merged_df = merged_df.fillna('N/A')
+            
+            # iOS渠道特殊处理
+            if channel == 'ios':
+                expected_columns = ['date', 'Country', 'Impressions', 'Clicks', 'Installs', 'Conversion Rate',
+                                  'Activity Sessions', 'Cost', 'Activity Revenue', 'Average eCPIUS$2.31',
+                                  'Average DAU', 'Average MAU', 'Average DAU/MAU Rate', 'ARPDAU']
+                
+                extra_columns = [col for col in merged_df.columns if col not in expected_columns]
+                if extra_columns:
+                    merged_df = merged_df.drop(columns=extra_columns)
+                
+                missing_columns = [col for col in expected_columns if col not in merged_df.columns]
+                if missing_columns:
+                    for col in missing_columns:
+                        merged_df[col] = 'N/A'
+                
+                merged_df = merged_df[expected_columns]
+            
+            merged_by_channel[channel] = merged_df
+    
     return merged_by_channel
 
+def create_download_zip(merged_data: Dict[str, pd.DataFrame]) -> bytes:
+    """创建包含所有合并文件的ZIP文件"""
+    zip_buffer = io.BytesIO()
+    
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        today = datetime.datetime.now().strftime("%m.%d")
+        
+        for channel, df in merged_data.items():
+            csv_buffer = io.StringIO()
+            df.to_csv(csv_buffer, index=False, encoding='utf-8')
+            csv_content = csv_buffer.getvalue().encode('utf-8')
+            
+            filename = f"{today} dau汇总_{channel}.csv"
+            zip_file.writestr(filename, csv_content)
+    
+    zip_buffer.seek(0)
+    return zip_buffer.getvalue()
 
-# 直接运行脚本
+def main():
+    st.set_page_config(
+        page_title="CSV文件合并工具",
+        page_icon="📊",
+        layout="wide"
+    )
+    
+    st.title("📊 CSV文件合并工具")
+    st.markdown("---")
+    
+    # 说明文档
+    with st.expander("📋 使用说明", expanded=True):
+        st.markdown("""
+        ### 功能说明
+        - 合并多个DAU相关的CSV文件
+        - 按渠道分组 (mvp, and, ios)
+        - 自动处理日期格式和数据清洗
+        - 生成按渠道分组的合并文件
+        
+        ### 文件命名要求
+        - 文件名必须包含 "dau"
+        - 文件名格式应为: `dau_渠道_日期.csv` (例如: `dau_mvp_3.17.csv`)
+        - 支持的渠道: mvp, and, ios
+        
+        ### 数据处理
+        - 自动删除 'Total Conversions', 'Re-attribution', 'Re-engagement' 列
+        - 添加日期列并按日期排序
+        - 统一列格式和处理缺失值
+        """)
+    
+    # 文件上传
+    st.subheader("📁 上传CSV文件")
+    uploaded_files = st.file_uploader(
+        "选择要合并的CSV文件",
+        type=['csv'],
+        accept_multiple_files=True,
+        help="可以同时选择多个CSV文件"
+    )
+    
+    if uploaded_files:
+        st.success(f"已选择 {len(uploaded_files)} 个文件")
+        
+        # 显示上传的文件列表
+        with st.expander("查看上传的文件"):
+            for file in uploaded_files:
+                st.text(f"📄 {file.name} ({file.size} bytes)")
+        
+        # 处理按钮
+        if st.button("🚀 开始处理", type="primary"):
+            with st.spinner("正在处理文件..."):
+                merged_data = process_uploaded_files(uploaded_files)
+            
+            if merged_data:
+                st.success("✅ 文件处理完成!")
+                
+                # 显示处理结果摘要
+                st.subheader("📈 处理结果摘要")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                for i, (channel, df) in enumerate(merged_data.items()):
+                    with [col1, col2, col3][i]:
+                        st.metric(
+                            label=f"渠道 {channel.upper()}",
+                            value=f"{len(df)} 行数据"
+                        )
+                        
+                        # 显示日期范围
+                        dates = sorted(df['date'].unique(), key=convert_date_to_sortable)
+                        if dates:
+                            st.text(f"日期范围: {dates[0]} ~ {dates[-1]}")
+                
+                # 数据预览
+                st.subheader("👀 数据预览")
+                
+                tab_names = [f"渠道 {channel.upper()}" for channel in merged_data.keys()]
+                tabs = st.tabs(tab_names)
+                
+                for tab, (channel, df) in zip(tabs, merged_data.items()):
+                    with tab:
+                        st.dataframe(df.head(10), use_container_width=True)
+                        st.text(f"显示前10行，总共 {len(df)} 行")
+                
+                # 下载区域
+                st.subheader("💾 下载合并后的文件")
+                
+                # 创建ZIP文件
+                zip_data = create_download_zip(merged_data)
+                today = datetime.datetime.now().strftime("%m.%d")
+                
+                st.download_button(
+                    label="📦 下载所有合并文件 (ZIP)",
+                    data=zip_data,
+                    file_name=f"{today} dau汇总_所有渠道.zip",
+                    mime="application/zip"
+                )
+                
+                # 单独下载每个渠道的文件
+                st.markdown("**或者单独下载各渠道文件:**")
+                
+                cols = st.columns(len(merged_data))
+                for col, (channel, df) in zip(cols, merged_data.items()):
+                    with col:
+                        csv_data = df.to_csv(index=False, encoding='utf-8')
+                        filename = f"{today} dau汇总_{channel}.csv"
+                        
+                        st.download_button(
+                            label=f"📄 下载 {channel.upper()}",
+                            data=csv_data.encode('utf-8'),
+                            file_name=filename,
+                            mime="text/csv"
+                        )
+    else:
+        st.info("👆 请上传CSV文件开始处理")
+    
+    # 页脚
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style='text-align: center; color: #666;'>
+            <p>CSV文件合并工具 | 支持DAU数据处理和渠道分组</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 if __name__ == "__main__":
-    try:
-        # 使用指定的下载路径
-        input_directory = "/Users/shuo.yuan/Downloads"
-
-        # 合并CSV文件
-        channel_data = merge_csv_files(input_directory)
-
-        # 显示处理结果摘要
-        if channel_data is not None:
-            print("\n处理结果摘要:")
-            for channel, df in channel_data.items():
-                print(f"- 渠道 {channel}: {len(df)} 行数据")
-
-                # 显示排序后的日期顺序（仅显示前5个和后5个日期，如果数据足够）
-                all_dates = df['date'].unique()
-                if len(all_dates) > 0:
-                    sample_dates = list(all_dates)
-                    if len(sample_dates) > 10:
-                        date_preview = sample_dates[:5] + ['...'] + sample_dates[-5:]
-                    else:
-                        date_preview = sample_dates
-                    print(f"  日期顺序: {' -> '.join(date_preview)}")
-
-            print("\n文件已保存到下载文件夹。")
-
-    except Exception as e:
-        print(f"\n程序运行时发生严重错误: {str(e)}")
-        # 输出完整的错误跟踪信息
-        import traceback
-
-        print("\n详细错误信息:")
-        traceback.print_exc()
+    main()
