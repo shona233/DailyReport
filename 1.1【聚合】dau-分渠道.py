@@ -8,9 +8,8 @@
 - pandas >= 1.5.0
 - numpy >= 1.20.0
 - openpyxl >= 3.0.0
-- matplotlib >= 3.5.0
 
-安装命令: pip install streamlit pandas numpy openpyxl matplotlib
+说明: 其他依赖包将自动安装
 """
 
 import streamlit as st
@@ -20,11 +19,49 @@ import re
 import io
 import numpy as np
 import warnings
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib import font_manager
-import seaborn as sns
+import subprocess
+import sys
 from typing import Dict, List, Optional, Tuple
+
+# 自动安装依赖包函数
+@st.cache_resource
+def install_and_import_packages():
+    """自动安装并导入所需的包"""
+    packages_to_install = []
+    
+    try:
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+    except ImportError:
+        packages_to_install.append('matplotlib')
+    
+    try:
+        import seaborn as sns
+    except ImportError:
+        packages_to_install.append('seaborn')
+    
+    # 如果需要安装包
+    if packages_to_install:
+        with st.spinner(f"正在自动安装依赖包: {', '.join(packages_to_install)}..."):
+            for package in packages_to_install:
+                try:
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", package], 
+                                        stdout=subprocess.DEVNULL, 
+                                        stderr=subprocess.DEVNULL)
+                except Exception as e:
+                    st.warning(f"自动安装 {package} 失败，将使用替代方案")
+    
+    # 重新导入
+    try:
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        import seaborn as sns
+        return plt, mdates, sns, True
+    except ImportError:
+        return None, None, None, False
+
+# 尝试自动安装和导入
+plt, mdates, sns, has_matplotlib = install_and_import_packages()
 
 # 忽略警告
 warnings.filterwarnings('ignore')
@@ -379,130 +416,127 @@ def create_weather_visualization(df, title, chart_type="line"):
         except:
             df_viz = df.copy()
         
-        # 设置matplotlib样式
-        plt.style.use('default')
-        
-        # 天气主题配色
-        colors = ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe', '#00f2fe', '#43e97b']
-        
-        if chart_type == "line":
-            # 寻找数值列
-            numeric_cols = df_viz.select_dtypes(include=[np.number]).columns.tolist()
+        # 如果matplotlib可用，使用matplotlib
+        if has_matplotlib and plt is not None:
+            return create_matplotlib_chart(df_viz, title, chart_type, date_col)
+        else:
+            # 使用Streamlit内置图表作为备选方案
+            return create_streamlit_chart(df_viz, title, chart_type, date_col)
             
-            if len(numeric_cols) > 0:
-                fig, ax = plt.subplots(figsize=(12, 6))
+    except Exception as e:
+        st.warning(f"图表创建失败: {str(e)}")
+        return None
+
+def create_matplotlib_chart(df_viz, title, chart_type, date_col):
+    """使用matplotlib创建图表"""
+    # 天气主题配色
+    colors = ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe', '#00f2fe', '#43e97b']
+    
+    if chart_type == "line":
+        # 寻找数值列
+        numeric_cols = df_viz.select_dtypes(include=[np.number]).columns.tolist()
+        
+        if len(numeric_cols) > 0:
+            fig, ax = plt.subplots(figsize=(12, 6))
+            fig.patch.set_facecolor('white')
+            fig.patch.set_alpha(0.9)
+            
+            # 添加多个数值列的线图
+            for i, col in enumerate(numeric_cols[:5]):
+                valid_data = df_viz[[date_col, col]].dropna()
+                if not valid_data.empty:
+                    ax.plot(valid_data[date_col], valid_data[col], 
+                           color=colors[i % len(colors)], 
+                           linewidth=3, 
+                           marker='o', 
+                           markersize=6,
+                           label=col,
+                           alpha=0.8)
+            
+            ax.set_title(title, fontsize=16, fontweight='bold', color='#333', pad=20)
+            ax.set_xlabel('日期', fontsize=12, color='#666')
+            ax.set_ylabel('数值', fontsize=12, color='#666')
+            
+            # 美化样式
+            ax.grid(True, alpha=0.3)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_color('#ddd')
+            ax.spines['bottom'].set_color('#ddd')
+            
+            if len(numeric_cols) > 1:
+                ax.legend(loc='upper left', frameon=False)
+            
+            # 格式化x轴日期
+            if df_viz[date_col].dtype == 'datetime64[ns]' and mdates is not None:
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+                plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
+            
+            plt.tight_layout()
+            return fig
+            
+    elif chart_type == "bar":
+        # 创建柱状图
+        if '三端' in df_viz.columns:
+            # 按渠道分组统计
+            numeric_cols = df_viz.select_dtypes(include=[np.number]).columns.tolist()
+            if numeric_cols:
+                agg_data = df_viz.groupby('三端')[numeric_cols[0]].sum().reset_index()
+                
+                fig, ax = plt.subplots(figsize=(10, 6))
                 fig.patch.set_facecolor('white')
                 fig.patch.set_alpha(0.9)
                 
-                # 添加多个数值列的线图
-                for i, col in enumerate(numeric_cols[:5]):
-                    valid_data = df_viz[[date_col, col]].dropna()
-                    if not valid_data.empty:
-                        ax.plot(valid_data[date_col], valid_data[col], 
-                               color=colors[i % len(colors)], 
-                               linewidth=3, 
-                               marker='o', 
-                               markersize=6,
-                               label=col,
-                               alpha=0.8)
+                bars = ax.bar(agg_data['三端'], agg_data[numeric_cols[0]], 
+                             color=colors[:len(agg_data)], 
+                             alpha=0.8,
+                             edgecolor='white',
+                             linewidth=2)
                 
                 ax.set_title(title, fontsize=16, fontweight='bold', color='#333', pad=20)
-                ax.set_xlabel('日期', fontsize=12, color='#666')
-                ax.set_ylabel('数值', fontsize=12, color='#666')
+                ax.set_xlabel('渠道', fontsize=12, color='#666')
+                ax.set_ylabel(numeric_cols[0], fontsize=12, color='#666')
                 
                 # 美化样式
-                ax.grid(True, alpha=0.3)
+                ax.grid(True, alpha=0.3, axis='y')
                 ax.spines['top'].set_visible(False)
                 ax.spines['right'].set_visible(False)
                 ax.spines['left'].set_color('#ddd')
                 ax.spines['bottom'].set_color('#ddd')
                 
-                if len(numeric_cols) > 1:
-                    ax.legend(loc='upper left', frameon=False)
-                
-                # 格式化x轴日期
-                if df_viz[date_col].dtype == 'datetime64[ns]':
-                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
-                    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
+                # 在柱子上显示数值
+                for bar in bars:
+                    height = bar.get_height()
+                    ax.text(bar.get_x() + bar.get_width()/2., height,
+                           f'{height:,.0f}',
+                           ha='center', va='bottom', fontweight='bold')
                 
                 plt.tight_layout()
                 return fig
-                
-        elif chart_type == "bar":
-            # 创建柱状图
-            if '三端' in df_viz.columns:
-                # 按渠道分组统计
-                numeric_cols = df_viz.select_dtypes(include=[np.number]).columns.tolist()
-                if numeric_cols:
-                    agg_data = df_viz.groupby('三端')[numeric_cols[0]].sum().reset_index()
-                    
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    fig.patch.set_facecolor('white')
-                    fig.patch.set_alpha(0.9)
-                    
-                    bars = ax.bar(agg_data['三端'], agg_data[numeric_cols[0]], 
-                                 color=colors[:len(agg_data)], 
-                                 alpha=0.8,
-                                 edgecolor='white',
-                                 linewidth=2)
-                    
-                    ax.set_title(title, fontsize=16, fontweight='bold', color='#333', pad=20)
-                    ax.set_xlabel('渠道', fontsize=12, color='#666')
-                    ax.set_ylabel(numeric_cols[0], fontsize=12, color='#666')
-                    
-                    # 美化样式
-                    ax.grid(True, alpha=0.3, axis='y')
-                    ax.spines['top'].set_visible(False)
-                    ax.spines['right'].set_visible(False)
-                    ax.spines['left'].set_color('#ddd')
-                    ax.spines['bottom'].set_color('#ddd')
-                    
-                    # 在柱子上显示数值
-                    for bar in bars:
-                        height = bar.get_height()
-                        ax.text(bar.get_x() + bar.get_width()/2., height,
-                               f'{height:,.0f}',
-                               ha='center', va='bottom', fontweight='bold')
-                    
-                    plt.tight_layout()
-                    return fig
-        
-        elif chart_type == "heatmap":
-            # 创建热力图
+    
+    return None
+
+def create_streamlit_chart(df_viz, title, chart_type, date_col):
+    """使用Streamlit内置图表作为备选方案"""
+    st.subheader(title)
+    
+    if chart_type == "line":
+        # 寻找数值列
+        numeric_cols = df_viz.select_dtypes(include=[np.number]).columns.tolist()
+        if len(numeric_cols) > 0:
+            # 准备数据用于st.line_chart
+            chart_data = df_viz.set_index(date_col)[numeric_cols[:5]]
+            st.line_chart(chart_data, height=400)
+            return "streamlit_chart"
+            
+    elif chart_type == "bar":
+        if '三端' in df_viz.columns:
             numeric_cols = df_viz.select_dtypes(include=[np.number]).columns.tolist()
-            if len(numeric_cols) >= 2:
-                corr_matrix = df_viz[numeric_cols].corr()
-                
-                fig, ax = plt.subplots(figsize=(10, 8))
-                fig.patch.set_facecolor('white')
-                fig.patch.set_alpha(0.9)
-                
-                im = ax.imshow(corr_matrix, cmap='RdBu_r', aspect='auto', vmin=-1, vmax=1)
-                
-                # 设置标签
-                ax.set_xticks(range(len(corr_matrix.columns)))
-                ax.set_yticks(range(len(corr_matrix.columns)))
-                ax.set_xticklabels(corr_matrix.columns, rotation=45, ha='right')
-                ax.set_yticklabels(corr_matrix.columns)
-                
-                # 添加数值标注
-                for i in range(len(corr_matrix.columns)):
-                    for j in range(len(corr_matrix.columns)):
-                        text = ax.text(j, i, f'{corr_matrix.iloc[i, j]:.2f}',
-                                     ha="center", va="center", color="black", fontweight='bold')
-                
-                ax.set_title(f"{title} - 相关性分析", fontsize=16, fontweight='bold', color='#333', pad=20)
-                
-                # 添加colorbar
-                cbar = plt.colorbar(im, ax=ax)
-                cbar.set_label('相关系数', rotation=270, labelpad=20)
-                
-                plt.tight_layout()
-                return fig
-                
-    except Exception as e:
-        st.warning(f"图表创建失败: {str(e)}")
-        return None
+            if numeric_cols:
+                agg_data = df_viz.groupby('三端')[numeric_cols[0]].sum().reset_index()
+                agg_data = agg_data.set_index('三端')
+                st.bar_chart(agg_data, height=400)
+                return "streamlit_chart"
     
     return None
 
@@ -1111,7 +1145,9 @@ def main():
             with viz_cols[0]:
                 st.markdown('<div class="data-preview">', unsafe_allow_html=True)
                 fig_line = create_weather_visualization(integrated_dau, "📈 DAU趋势分析", "line")
-                if fig_line:
+                if fig_line == "streamlit_chart":
+                    pass  # 图表已经通过streamlit显示
+                elif fig_line:
                     st.pyplot(fig_line, use_container_width=True)
                     plt.close(fig_line)  # 释放内存
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -1119,7 +1155,9 @@ def main():
             with viz_cols[1]:
                 st.markdown('<div class="data-preview">', unsafe_allow_html=True)
                 fig_bar = create_weather_visualization(integrated_dau, "🔍 渠道对比分析", "bar")
-                if fig_bar:
+                if fig_bar == "streamlit_chart":
+                    pass  # 图表已经通过streamlit显示
+                elif fig_bar:
                     st.pyplot(fig_bar, use_container_width=True)
                     plt.close(fig_bar)  # 释放内存
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -1242,7 +1280,9 @@ def main():
             with retention_viz_cols[0]:
                 st.markdown('<div class="data-preview">', unsafe_allow_html=True)
                 fig_retention = create_weather_visualization(integrated_retention, "📈 留存率趋势", "line")
-                if fig_retention:
+                if fig_retention == "streamlit_chart":
+                    pass  # 图表已经通过streamlit显示
+                elif fig_retention:
                     st.pyplot(fig_retention, use_container_width=True)
                     plt.close(fig_retention)  # 释放内存
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -1250,7 +1290,9 @@ def main():
             with retention_viz_cols[1]:
                 st.markdown('<div class="data-preview">', unsafe_allow_html=True)
                 fig_retention_bar = create_weather_visualization(integrated_retention, "🔍 渠道留存对比", "bar")
-                if fig_retention_bar:
+                if fig_retention_bar == "streamlit_chart":
+                    pass  # 图表已经通过streamlit显示
+                elif fig_retention_bar:
                     st.pyplot(fig_retention_bar, use_container_width=True)
                     plt.close(fig_retention_bar)  # 释放内存
                 st.markdown('</div>', unsafe_allow_html=True)
