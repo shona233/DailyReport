@@ -701,10 +701,11 @@ def main():
             with download_cols[0]:
                 integrated_dau = create_integrated_dau(st.session_state.dau_results)
                 if not integrated_dau.empty:
-                    csv_data = integrated_dau.to_csv(index=False, encoding='utf-8')
+                    # 使用UTF-8 BOM编码确保中文正确显示
+                    csv_data = integrated_dau.to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(
                         label="📈 下载三端DAU汇总文件",
-                        data=csv_data.encode('utf-8'),
+                        data=csv_data.encode('utf-8-sig'),
                         file_name=f"{today} 三端dau汇总.csv",
                         mime="text/csv",
                         type="primary"
@@ -718,10 +719,11 @@ def main():
             with download_cols[1]:
                 integrated_retention = create_integrated_retention(st.session_state.retention_results)
                 if not integrated_retention.empty:
-                    csv_data = integrated_retention.to_csv(index=False, encoding='utf-8')
+                    # 使用UTF-8 BOM编码确保中文正确显示
+                    csv_data = integrated_retention.to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(
                         label="🔄 下载三端留存汇总文件",
-                        data=csv_data.encode('utf-8'),
+                        data=csv_data.encode('utf-8-sig'),
                         file_name=f"{today} 三端留存汇总.csv",
                         mime="text/csv",
                         type="primary"
@@ -739,10 +741,11 @@ def main():
             dau_cols = st.columns(len(st.session_state.dau_results))
             for i, (channel, df) in enumerate(st.session_state.dau_results.items()):
                 with dau_cols[i]:
-                    csv_data = df.to_csv(index=False, encoding='utf-8')
+                    # 使用UTF-8 BOM编码确保中文正确显示
+                    csv_data = df.to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(
                         label=f"📈 DAU-{channel.upper()}",
-                        data=csv_data.encode('utf-8'),
+                        data=csv_data.encode('utf-8-sig'),
                         file_name=f"{today} dau汇总_{channel}.csv",
                         mime="text/csv",
                         key=f"dau_{channel}"
@@ -755,10 +758,11 @@ def main():
             retention_cols = st.columns(len(st.session_state.retention_results))
             for i, (channel, df) in enumerate(st.session_state.retention_results.items()):
                 with retention_cols[i]:
-                    csv_data = df.to_csv(index=False, encoding='utf-8')
+                    # 使用UTF-8 BOM编码确保中文正确显示
+                    csv_data = df.to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(
                         label=f"🔄 留存-{channel.upper()}",
-                        data=csv_data.encode('utf-8'),
+                        data=csv_data.encode('utf-8-sig'),
                         file_name=f"{today} 留存_{channel}.csv",
                         mime="text/csv",
                         key=f"retention_{channel}"
