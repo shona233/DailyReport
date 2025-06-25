@@ -3,8 +3,7 @@ import pandas as pd
 import datetime
 import re
 import io
-import zipfile
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 def convert_date_to_sortable(date_str: str) -> str:
     """将日期字符串转换为可排序的格式"""
@@ -19,33 +18,57 @@ def convert_date_to_sortable(date_str: str) -> str:
         pass
     return date_str
 
-def process_uploaded_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
-    """处理上传的CSV文件"""
-    
-    # 创建进度条
+def force_standardize_date(date_str):
+    """强制标准化日期格式，确保月份和日期都是两位数"""
+    if pd.isna(date_str) or str(date_str).strip() == '':
+        return date_str
+
+    date_str = str(date_str).strip()
+
+    # 处理不同分隔符，统一转换为/
+    if '-' in date_str:
+        date_str = date_str.replace('-', '/')
+
+    # 如果包含/，则处理
+    if '/' in date_str:
+        parts = date_str.split('/')
+        if len(parts) == 3:
+            try:
+                year = int(parts[0])
+                month = int(parts[1])
+                day = int(parts[2])
+                # 强制格式化为两位数
+                result = f"{year:04d}/{month:02d}/{day:02d}"
+                return result
+            except:
+                pass
+
+    return date_str
+
+def process_dau_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
+    """处理DAU文件上传"""
+    if not uploaded_files:
+        return None
+        
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    # 存储每个渠道的DataFrame列表
     channel_dfs = {'mvp': [], 'and': [], 'ios': []}
     standard_columns = {'mvp': None, 'and': None, 'ios': None}
     
     processed_files = 0
     total_files = len(uploaded_files)
     
-    # 创建详细日志容器
-    log_container = st.expander("处理详情", expanded=False)
+    log_container = st.expander("DAU文件处理详情", expanded=False)
     
     for i, uploaded_file in enumerate(uploaded_files):
         try:
-            # 更新进度
             progress = (i + 1) / total_files
             progress_bar.progress(progress)
             status_text.text(f"正在处理: {uploaded_file.name} ({i+1}/{total_files})")
             
             filename = uploaded_file.name
             
-            # 检查文件名是否包含"dau"
             if "dau" not in filename.lower():
                 log_container.warning(f"跳过文件 {filename}: 文件名不包含'dau'")
                 continue
@@ -62,7 +85,6 @@ def process_uploaded_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
             
             # 读取CSV文件
             try:
-                # 尝试不同的编码
                 content = uploaded_file.getvalue()
                 try:
                     df = pd.read_csv(io.StringIO(content.decode('utf-8')), 
@@ -77,12 +99,11 @@ def process_uploaded_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
                 log_container.error(f"读取文件 {filename} 失败: {str(e)}")
                 continue
             
-            # 验证数据不为空
             if df.empty:
                 log_container.warning(f"文件 {filename} 不包含数据，已跳过")
                 continue
             
-            # 删除指定的三列（如果存在）
+            # 删除指定的三列
             columns_to_drop = ['Total Conversions', 'Re-attribution', 'Re-engagement']
             original_cols = df.columns.tolist()
             df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
@@ -90,7 +111,7 @@ def process_uploaded_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
             if removed_cols:
                 log_container.info(f"已删除列: {', '.join(removed_cols)}")
             
-            # 从文件名提取日期部分并格式化
+            # 从文件名提取日期
             try:
                 date_part = filename.split('_')[-1].replace('.csv', '')
                 match = re.search(r'(\d+)\.(\d+)', date_part)
@@ -103,41 +124,33 @@ def process_uploaded_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
                 formatted_date = "2025/1/1"
                 log_container.warning(f"无法从文件名 {filename} 提取日期，使用默认值")
             
-            # 添加日期列到DataFrame的最前面
+            # 添加日期列
             df.insert(0, 'date', formatted_date)
             
-            # 如果是iOS渠道且发现有问题的列
+            # iOS特殊处理
             if channel == 'ios' and 'Average eCPIUS$2.50' in df.columns:
                 df = df.drop(columns=['Average eCPIUS$2.50'])
-                log_container.info(f"移除iOS中的问题列: 'Average eCPIUS$2.50'")
+                log_container.info(f"移除iOS中的问题列")
             
             # 列标准化
             if standard_columns[channel] is None:
                 standard_columns[channel] = df.columns.tolist()
-                log_container.info(f"设置 {channel} 渠道的标准列")
             else:
                 current_cols = df.columns.tolist()
                 if current_cols != standard_columns[channel]:
-                    # 调整列名以匹配标准列
                     missing_cols = [col for col in standard_columns[channel] if col not in current_cols]
                     extra_cols = [col for col in current_cols if col not in standard_columns[channel]]
                     
                     if missing_cols:
                         for col in missing_cols:
                             df[col] = 'N/A'
-                        log_container.info(f"添加缺少的列: {', '.join(missing_cols)}")
                     
                     if extra_cols:
                         df = df.drop(columns=extra_cols)
-                        log_container.info(f"移除多余的列: {', '.join(extra_cols)}")
                     
-                    # 确保列顺序一致
                     df = df[standard_columns[channel]]
             
-            # 将空值转换为"N/A"
             df = df.fillna('N/A')
-            
-            # 添加到对应渠道
             channel_dfs[channel].append(df)
             processed_files += 1
             
@@ -145,22 +158,19 @@ def process_uploaded_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
             log_container.error(f"处理文件 {uploaded_file.name} 时发生错误: {str(e)}")
             continue
     
-    # 完成进度
     progress_bar.progress(1.0)
-    status_text.text(f"处理完成! 成功处理了 {processed_files} 个文件")
+    status_text.text(f"DAU文件处理完成! 成功处理了 {processed_files} 个文件")
     
     if processed_files == 0:
-        st.error("没有成功处理任何文件")
+        st.error("没有成功处理任何DAU文件")
         return None
     
-    # 合并数据并按日期排序
+    # 合并数据
     merged_by_channel = {}
     
     for channel, df_list in channel_dfs.items():
         if df_list:
-            st.info(f"正在合并渠道 {channel} 的 {len(df_list)} 个文件...")
-            
-            # 确保所有DataFrame都有相同的列
+            # 确保列一致性
             if len(df_list) > 1:
                 standard_cols = list(df_list[0].columns)
                 for i, df in enumerate(df_list):
@@ -175,7 +185,6 @@ def process_uploaded_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
                         df = df[standard_cols]
                         df_list[i] = df
             
-            # 合并该渠道的所有DataFrame
             merged_df = pd.concat(df_list, ignore_index=True)
             
             # 按日期排序
@@ -186,10 +195,9 @@ def process_uploaded_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
             except Exception as e:
                 st.warning(f"渠道 {channel} 排序时出错: {str(e)}")
             
-            # 确保空值转换为N/A
             merged_df = merged_df.fillna('N/A')
             
-            # iOS渠道特殊处理
+            # iOS特殊处理
             if channel == 'ios':
                 expected_columns = ['date', 'Country', 'Impressions', 'Clicks', 'Installs', 'Conversion Rate',
                                   'Activity Sessions', 'Cost', 'Activity Revenue', 'Average eCPIUS$2.31',
@@ -210,145 +218,562 @@ def process_uploaded_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
     
     return merged_by_channel
 
-def create_download_zip(merged_data: Dict[str, pd.DataFrame]) -> bytes:
-    """创建包含所有合并文件的ZIP文件"""
-    zip_buffer = io.BytesIO()
-    
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-        today = datetime.datetime.now().strftime("%m.%d")
+def process_retention_files(uploaded_files) -> Optional[Dict[str, pd.DataFrame]]:
+    """处理留存文件上传"""
+    if not uploaded_files:
+        return None
         
-        for channel, df in merged_data.items():
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, index=False, encoding='utf-8')
-            csv_content = csv_buffer.getvalue().encode('utf-8')
-            
-            filename = f"{today} dau汇总_{channel}.csv"
-            zip_file.writestr(filename, csv_content)
+    # 渠道配置
+    channels_config = {
+        'ios': {
+            'pattern': 'retention_ios.csv',
+            'empty_columns': 4,
+            'days': list(range(1, 8)) + [14, 30]
+        },
+        'ios_formal': {
+            'pattern': 'retention_ios_formal.csv',
+            'empty_columns': 4,
+            'days': list(range(1, 8)) + [14, 30]
+        },
+        'mvp': {
+            'pattern': 'retention_mvp.csv',
+            'empty_columns': 1,
+            'days': list(range(1, 8)) + [14]
+        },
+        'and': {
+            'pattern': 'retention_and.csv',
+            'empty_columns': 0,
+            'days': list(range(1, 8)) + [14, 30]
+        }
+    }
     
-    zip_buffer.seek(0)
-    return zip_buffer.getvalue()
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    log_container = st.expander("留存文件处理详情", expanded=False)
+    
+    processed_data = {}
+    total_files = len(uploaded_files)
+    
+    for i, uploaded_file in enumerate(uploaded_files):
+        try:
+            progress = (i + 1) / total_files
+            progress_bar.progress(progress)
+            status_text.text(f"正在处理: {uploaded_file.name} ({i+1}/{total_files})")
+            
+            filename = uploaded_file.name.lower()
+            
+            # 匹配渠道
+            channel = None
+            for ch, config in channels_config.items():
+                if config['pattern'].lower() in filename:
+                    channel = ch
+                    break
+            
+            if not channel:
+                log_container.warning(f"跳过文件 {uploaded_file.name}: 无法识别的留存文件")
+                continue
+            
+            # 读取文件
+            try:
+                content = uploaded_file.getvalue()
+                encodings = ['utf-8', 'gbk', 'gb2312', 'latin1']
+                df = None
+                
+                for encoding in encodings:
+                    try:
+                        df = pd.read_csv(io.StringIO(content.decode(encoding)))
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                
+                if df is None:
+                    log_container.error(f"无法读取文件 {uploaded_file.name}")
+                    continue
+                
+                log_container.success(f"成功读取 {uploaded_file.name}, 形状: {df.shape}")
+                
+            except Exception as e:
+                log_container.error(f"读取文件 {uploaded_file.name} 失败: {str(e)}")
+                continue
+            
+            # 处理日期列
+            date_column = "Cohort Day"
+            if date_column not in df.columns:
+                possible_date_columns = ['Date', 'date', '日期', 'DAY', 'Day', 'day']
+                for col in possible_date_columns:
+                    if col in df.columns:
+                        date_column = col
+                        break
+                
+                if date_column not in df.columns:
+                    log_container.error(f"无法找到日期列")
+                    continue
+            
+            # 排序数据
+            try:
+                df[date_column] = pd.to_datetime(df[date_column])
+                df = df.sort_values(by=date_column)
+            except:
+                try:
+                    df = df.sort_values(by=date_column)
+                except:
+                    log_container.warning(f"无法排序数据")
+            
+            # 检查用户列
+            users_column = 'Users'
+            if users_column not in df.columns:
+                possible_users_columns = ['users', '用户数', 'DAU', 'User Count', 'user_count']
+                for col in possible_users_columns:
+                    if col in df.columns:
+                        users_column = col
+                        break
+                
+                if users_column not in df.columns:
+                    log_container.error(f"无法找到用户列")
+                    continue
+            
+            # 添加空列
+            config = channels_config[channel]
+            for j in range(config['empty_columns']):
+                df[' ' * (j + 1)] = None
+            
+            # 计算留存率
+            for day in config['days']:
+                retention_column = f'sessions - Unique users - day {day} - partial'
+                alternative_column = f'sessions - Unique users - day {day}'
+                
+                if retention_column in df.columns:
+                    df[f'day{day}'] = (df[retention_column] / df[users_column]).round(4)
+                elif alternative_column in df.columns:
+                    df[retention_column] = df[alternative_column]
+                    df[f'day{day}'] = (df[retention_column] / df[users_column]).round(4)
+                else:
+                    log_container.warning(f"无法计算 day{day} 留存率")
+            
+            processed_data[channel] = df
+            log_container.success(f"成功处理 {channel} 渠道留存数据")
+            
+        except Exception as e:
+            log_container.error(f"处理文件 {uploaded_file.name} 时发生错误: {str(e)}")
+            continue
+    
+    progress_bar.progress(1.0)
+    status_text.text(f"留存文件处理完成! 成功处理了 {len(processed_data)} 个文件")
+    
+    return processed_data if processed_data else None
+
+def create_integrated_dau(merged_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """整合三个渠道的DAU数据"""
+    if not merged_data:
+        return pd.DataFrame()
+    
+    integrated_dfs = []
+    
+    for channel, df in merged_data.items():
+        df_copy = df.copy()
+        # 映射渠道名
+        channel_mapping = {'and': 'android', 'mvp': 'mvp', 'ios': 'ios'}
+        df_copy.insert(1, '三端', channel_mapping.get(channel, channel))
+        integrated_dfs.append(df_copy)
+    
+    if not integrated_dfs:
+        return pd.DataFrame()
+    
+    try:
+        # 统一列
+        all_columns = []
+        for df in integrated_dfs:
+            all_columns.extend(df.columns.tolist())
+        
+        unique_columns = list(dict.fromkeys(all_columns))
+        
+        standardized_dfs = []
+        for df in integrated_dfs:
+            df_copy = df.copy()
+            
+            for col in unique_columns:
+                if col not in df_copy.columns:
+                    df_copy[col] = 'N/A'
+            
+            df_copy = df_copy[unique_columns]
+            standardized_dfs.append(df_copy)
+        
+        integrated_df = pd.concat(standardized_dfs, ignore_index=True)
+        
+        # 统一日期格式
+        if 'date' in integrated_df.columns:
+            integrated_df['date'] = integrated_df['date'].apply(force_standardize_date)
+        
+        # 排序
+        try:
+            integrated_df['sort_key'] = integrated_df['date'].apply(convert_date_to_sortable)
+            channel_order = {"mvp": 0, "android": 1, "ios": 2}
+            integrated_df["渠道排序"] = integrated_df["三端"].map(channel_order)
+            integrated_df = integrated_df.sort_values(by=['sort_key', '渠道排序'])
+            integrated_df = integrated_df.drop(columns=['sort_key', '渠道排序'])
+        except Exception as e:
+            st.warning(f"整合DAU数据排序时出错: {str(e)}")
+        
+        integrated_df = integrated_df.fillna('N/A')
+        
+        # 只保留前15列加三端列
+        if len(integrated_df.columns) > 16:
+            first_15_cols = integrated_df.iloc[:, :15].columns.tolist()
+            if "三端" in integrated_df.columns and "三端" not in first_15_cols:
+                cols_to_keep = first_15_cols + ["三端"]
+                integrated_df = integrated_df[cols_to_keep]
+        
+        return integrated_df
+        
+    except Exception as e:
+        st.error(f"整合DAU数据时出错: {str(e)}")
+        return pd.DataFrame()
+
+def create_integrated_retention(retention_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """整合留存数据"""
+    if not retention_data:
+        return pd.DataFrame()
+    
+    integrated_dfs = []
+    
+    # 渠道映射
+    channel_mapping = {'and': 'android', 'mvp': 'mvp', 'ios': 'ios', 'ios_formal': 'ios'}
+    
+    # 期望的列顺序
+    expected_columns = [
+        "Cohort Day", "Ltv Country", "Campaign Id", "Keywords", "Users", "Cost", "Average eCPI",
+        "sessions - Unique users - day 1 - partial", "sessions - Unique users - day 2 - partial",
+        "sessions - Unique users - day 3 - partial", "sessions - Unique users - day 4 - partial",
+        "sessions - Unique users - day 5 - partial", "sessions - Unique users - day 6 - partial",
+        "sessions - Unique users - day 7 - partial", "sessions - Unique users - day 14 - partial",
+        "sessions - Unique users - day 30 - partial", "Unnamed: 16", "Unnamed: 17", "Unnamed: 18",
+        "day1", "day2", "day3", "day4", "day5", "day6", "day7", "day14", "day30",
+        "三端"
+    ]
+    
+    for channel, df in retention_data.items():
+        df_copy = df.copy()
+        
+        # 映射渠道名
+        mapped_channel = channel_mapping.get(channel, channel)
+        df_copy["三端"] = mapped_channel
+        
+        # 列名修正
+        if channel in ["mvp", "and"]:
+            alt_day14 = "sessions - Unique users - day 14- partial"
+            std_day14 = "sessions - Unique users - day 14 - partial"
+            if alt_day14 in df_copy.columns and std_day14 not in df_copy.columns:
+                df_copy = df_copy.rename(columns={alt_day14: std_day14})
+            
+            alt_day30 = "sessions - Unique users - day 30- partial"
+            std_day30 = "sessions - Unique users - day 30 - partial"
+            if alt_day30 in df_copy.columns and std_day30 not in df_copy.columns:
+                df_copy = df_copy.rename(columns={alt_day30: std_day30})
+        
+        integrated_dfs.append(df_copy)
+    
+    if not integrated_dfs:
+        return pd.DataFrame()
+    
+    try:
+        # 合并数据
+        integrated_df = pd.concat(integrated_dfs, ignore_index=True)
+        
+        # 统一日期格式
+        if "Cohort Day" in integrated_df.columns:
+            integrated_df["Cohort Day"] = integrated_df["Cohort Day"].apply(force_standardize_date)
+        
+        # 重新排序列并填充缺失列
+        final_columns = []
+        for col in expected_columns:
+            if col not in integrated_df.columns:
+                integrated_df[col] = None
+            final_columns.append(col)
+        
+        existing_cols = [col for col in final_columns if col in integrated_df.columns]
+        integrated_df = integrated_df[existing_cols]
+        
+        # 清空Unnamed列
+        unnamed_cols = [col for col in integrated_df.columns if 'Unnamed' in col]
+        for col in unnamed_cols:
+            integrated_df[col] = ''
+        
+        # 排序
+        try:
+            channel_order = {"mvp": 0, "android": 1, "ios": 2}
+            integrated_df["渠道排序"] = integrated_df["三端"].map(channel_order)
+            integrated_df = integrated_df.sort_values(by=["Cohort Day", "渠道排序"])
+            integrated_df = integrated_df.drop(columns=["渠道排序"])
+        except Exception as e:
+            st.warning(f"整合留存数据排序时出错: {str(e)}")
+        
+        integrated_df = integrated_df.fillna('N/A')
+        
+        return integrated_df
+        
+    except Exception as e:
+        st.error(f"整合留存数据时出错: {str(e)}")
+        return pd.DataFrame()
 
 def main():
     st.set_page_config(
-        page_title="CSV文件合并工具",
+        page_title="完整数据处理工具",
         page_icon="📊",
         layout="wide"
     )
     
-    st.title("📊 CSV文件合并工具")
+    st.title("📊 完整数据处理工具")
+    st.markdown("**DAU合并 + 留存率计算 + 数据整合**")
     st.markdown("---")
     
-    # 说明文档
+    # 使用说明
     with st.expander("📋 使用说明", expanded=True):
         st.markdown("""
-        ### 功能说明
-        - 合并多个DAU相关的CSV文件
-        - 按渠道分组 (mvp, and, ios)
-        - 自动处理日期格式和数据清洗
-        - 生成按渠道分组的合并文件
+        ### 🎯 功能概述
+        - **DAU文件合并**: 处理多个DAU CSV文件，按渠道分组合并
+        - **留存率计算**: 处理留存数据文件，自动计算各天留存率
+        - **数据整合**: 生成完整的三端数据文件和分渠道文件
         
-        ### 文件命名要求
-        - 文件名必须包含 "dau"
-        - 文件名格式应为: `dau_渠道_日期.csv` (例如: `dau_mvp_3.17.csv`)
-        - 支持的渠道: mvp, and, ios
+        ### 📁 文件要求
+        **DAU文件命名**: `dau_渠道_日期.csv` (例如: `dau_mvp_3.17.csv`)
+        - 支持渠道: mvp, and, ios
         
-        ### 数据处理
-        - 自动删除 'Total Conversions', 'Re-attribution', 'Re-engagement' 列
-        - 添加日期列并按日期排序
-        - 统一列格式和处理缺失值
+        **留存文件命名**: 
+        - `retention_ios.csv` (iOS渠道)
+        - `retention_ios_formal.csv` (iOS正式渠道)
+        - `retention_mvp.csv` (MVP渠道)
+        - `retention_and.csv` (Android渠道)
+        
+        ### 📤 输出文件
+        - **三端DAU汇总文件**: 包含所有渠道DAU数据
+        - **三端留存汇总文件**: 包含所有渠道留存数据
+        - **各渠道单独文件**: DAU和留存的分渠道文件
         """)
     
-    # 文件上传
-    st.subheader("📁 上传CSV文件")
-    uploaded_files = st.file_uploader(
-        "选择要合并的CSV文件",
-        type=['csv'],
-        accept_multiple_files=True,
-        help="可以同时选择多个CSV文件"
-    )
+    # 创建两个标签页
+    tab1, tab2 = st.tabs(["📈 DAU文件处理", "🔄 留存文件处理"])
     
-    if uploaded_files:
-        st.success(f"已选择 {len(uploaded_files)} 个文件")
+    # 存储处理结果
+    if 'dau_results' not in st.session_state:
+        st.session_state.dau_results = None
+    if 'retention_results' not in st.session_state:
+        st.session_state.retention_results = None
+    
+    # DAU文件处理标签页
+    with tab1:
+        st.subheader("📁 上传DAU文件")
+        dau_files = st.file_uploader(
+            "选择DAU CSV文件",
+            type=['csv'],
+            accept_multiple_files=True,
+            help="文件名格式: dau_渠道_日期.csv",
+            key="dau_uploader"
+        )
         
-        # 显示上传的文件列表
-        with st.expander("查看上传的文件"):
-            for file in uploaded_files:
-                st.text(f"📄 {file.name} ({file.size} bytes)")
-        
-        # 处理按钮
-        if st.button("🚀 开始处理", type="primary"):
-            with st.spinner("正在处理文件..."):
-                merged_data = process_uploaded_files(uploaded_files)
+        if dau_files:
+            st.success(f"已选择 {len(dau_files)} 个DAU文件")
             
-            if merged_data:
-                st.success("✅ 文件处理完成!")
+            if st.button("🚀 处理DAU文件", type="primary", key="process_dau"):
+                with st.spinner("正在处理DAU文件..."):
+                    st.session_state.dau_results = process_dau_files(dau_files)
                 
-                # 显示处理结果摘要
-                st.subheader("📈 处理结果摘要")
+                if st.session_state.dau_results:
+                    st.success("✅ DAU文件处理完成!")
+    
+    # 留存文件处理标签页
+    with tab2:
+        st.subheader("📁 上传留存文件")
+        retention_files = st.file_uploader(
+            "选择留存CSV文件",
+            type=['csv'],
+            accept_multiple_files=True,
+            help="文件名格式: retention_渠道.csv",
+            key="retention_uploader"
+        )
+        
+        if retention_files:
+            st.success(f"已选择 {len(retention_files)} 个留存文件")
+            
+            if st.button("🚀 处理留存文件", type="primary", key="process_retention"):
+                with st.spinner("正在处理留存文件..."):
+                    st.session_state.retention_results = process_retention_files(retention_files)
                 
-                col1, col2, col3 = st.columns(3)
+                if st.session_state.retention_results:
+                    st.success("✅ 留存文件处理完成!")
+    
+    # 如果有处理结果，显示数据预览和下载选项
+    if st.session_state.dau_results or st.session_state.retention_results:
+        st.markdown("---")
+        st.subheader("📊 处理结果")
+        
+        # 创建结果标签页
+        result_tabs = []
+        if st.session_state.dau_results:
+            result_tabs.append("📈 DAU数据")
+        if st.session_state.retention_results:
+            result_tabs.append("🔄 留存数据")
+        
+        if result_tabs:
+            tabs = st.tabs(result_tabs)
+            tab_index = 0
+            
+            # DAU结果显示
+            if st.session_state.dau_results:
+                with tabs[tab_index]:
+                    dau_data = st.session_state.dau_results
+                    
+                    # 创建整合的DAU数据
+                    integrated_dau = create_integrated_dau(dau_data)
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("处理渠道数", len(dau_data))
+                    with col2:
+                        total_rows = sum(len(df) for df in dau_data.values())
+                        st.metric("总数据行数", total_rows)
+                    with col3:
+                        if not integrated_dau.empty:
+                            st.metric("整合后行数", len(integrated_dau))
+                    
+                    # 数据预览
+                    preview_tabs = st.tabs(["🎯 三端DAU汇总"] + [f"{ch.upper()}渠道" for ch in dau_data.keys()])
+                    
+                    # 三端汇总预览
+                    with preview_tabs[0]:
+                        if not integrated_dau.empty:
+                            st.dataframe(integrated_dau.head(10), use_container_width=True)
+                        else:
+                            st.error("无法创建三端DAU汇总数据")
+                    
+                    # 各渠道预览
+                    for i, (channel, df) in enumerate(dau_data.items()):
+                        with preview_tabs[i + 1]:
+                            st.dataframe(df.head(10), use_container_width=True)
                 
-                for i, (channel, df) in enumerate(merged_data.items()):
-                    with [col1, col2, col3][i]:
-                        st.metric(
-                            label=f"渠道 {channel.upper()}",
-                            value=f"{len(df)} 行数据"
-                        )
-                        
-                        # 显示日期范围
-                        dates = sorted(df['date'].unique(), key=convert_date_to_sortable)
-                        if dates:
-                            st.text(f"日期范围: {dates[0]} ~ {dates[-1]}")
-                
-                # 数据预览
-                st.subheader("👀 数据预览")
-                
-                tab_names = [f"渠道 {channel.upper()}" for channel in merged_data.keys()]
-                tabs = st.tabs(tab_names)
-                
-                for tab, (channel, df) in zip(tabs, merged_data.items()):
-                    with tab:
-                        st.dataframe(df.head(10), use_container_width=True)
-                        st.text(f"显示前10行，总共 {len(df)} 行")
-                
-                # 下载区域
-                st.subheader("💾 下载合并后的文件")
-                
-                # 创建ZIP文件
-                zip_data = create_download_zip(merged_data)
-                today = datetime.datetime.now().strftime("%m.%d")
-                
-                st.download_button(
-                    label="📦 下载所有合并文件 (ZIP)",
-                    data=zip_data,
-                    file_name=f"{today} dau汇总_所有渠道.zip",
-                    mime="application/zip"
-                )
-                
-                # 单独下载每个渠道的文件
-                st.markdown("**或者单独下载各渠道文件:**")
-                
-                cols = st.columns(len(merged_data))
-                for col, (channel, df) in zip(cols, merged_data.items()):
-                    with col:
-                        csv_data = df.to_csv(index=False, encoding='utf-8')
-                        filename = f"{today} dau汇总_{channel}.csv"
-                        
-                        st.download_button(
-                            label=f"📄 下载 {channel.upper()}",
-                            data=csv_data.encode('utf-8'),
-                            file_name=filename,
-                            mime="text/csv"
-                        )
+                tab_index += 1
+            
+            # 留存结果显示
+            if st.session_state.retention_results:
+                with tabs[tab_index]:
+                    retention_data = st.session_state.retention_results
+                    
+                    # 创建整合的留存数据
+                    integrated_retention = create_integrated_retention(retention_data)
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("处理渠道数", len(retention_data))
+                    with col2:
+                        total_rows = sum(len(df) for df in retention_data.values())
+                        st.metric("总数据行数", total_rows)
+                    with col3:
+                        if not integrated_retention.empty:
+                            st.metric("整合后行数", len(integrated_retention))
+                    
+                    # 数据预览
+                    preview_tabs = st.tabs(["🎯 三端留存汇总"] + [f"{ch.upper()}渠道" for ch in retention_data.keys()])
+                    
+                    # 三端汇总预览
+                    with preview_tabs[0]:
+                        if not integrated_retention.empty:
+                            st.dataframe(integrated_retention.head(10), use_container_width=True)
+                        else:
+                            st.error("无法创建三端留存汇总数据")
+                    
+                    # 各渠道预览
+                    for i, (channel, df) in enumerate(retention_data.items()):
+                        with preview_tabs[i + 1]:
+                            st.dataframe(df.head(10), use_container_width=True)
+        
+        # 下载区域
+        st.markdown("---")
+        st.subheader("💾 下载处理后的文件")
+        
+        today = datetime.datetime.now().strftime("%m.%d")
+        
+        # 主要下载选项
+        st.markdown("### 🎯 **汇总文件下载**")
+        
+        download_cols = st.columns(2)
+        
+        # DAU汇总下载
+        if st.session_state.dau_results:
+            with download_cols[0]:
+                integrated_dau = create_integrated_dau(st.session_state.dau_results)
+                if not integrated_dau.empty:
+                    csv_data = integrated_dau.to_csv(index=False, encoding='utf-8')
+                    st.download_button(
+                        label="📈 下载三端DAU汇总文件",
+                        data=csv_data.encode('utf-8'),
+                        file_name=f"{today} 三端dau汇总.csv",
+                        mime="text/csv",
+                        type="primary"
+                    )
+                    st.success(f"✅ {len(integrated_dau)} 行DAU数据")
+                else:
+                    st.error("❌ DAU汇总数据生成失败")
+        
+        # 留存汇总下载
+        if st.session_state.retention_results:
+            with download_cols[1]:
+                integrated_retention = create_integrated_retention(st.session_state.retention_results)
+                if not integrated_retention.empty:
+                    csv_data = integrated_retention.to_csv(index=False, encoding='utf-8')
+                    st.download_button(
+                        label="🔄 下载三端留存汇总文件",
+                        data=csv_data.encode('utf-8'),
+                        file_name=f"{today} 三端留存汇总.csv",
+                        mime="text/csv",
+                        type="primary"
+                    )
+                    st.success(f"✅ {len(integrated_retention)} 行留存数据")
+                else:
+                    st.error("❌ 留存汇总数据生成失败")
+        
+        # 分渠道文件下载
+        st.markdown("### 📁 **分渠道文件下载**")
+        
+        # DAU分渠道下载
+        if st.session_state.dau_results:
+            st.markdown("**DAU分渠道文件:**")
+            dau_cols = st.columns(len(st.session_state.dau_results))
+            for i, (channel, df) in enumerate(st.session_state.dau_results.items()):
+                with dau_cols[i]:
+                    csv_data = df.to_csv(index=False, encoding='utf-8')
+                    st.download_button(
+                        label=f"📈 DAU-{channel.upper()}",
+                        data=csv_data.encode('utf-8'),
+                        file_name=f"{today} dau汇总_{channel}.csv",
+                        mime="text/csv",
+                        key=f"dau_{channel}"
+                    )
+                    st.text(f"{len(df)} 行数据")
+        
+        # 留存分渠道下载
+        if st.session_state.retention_results:
+            st.markdown("**留存分渠道文件:**")
+            retention_cols = st.columns(len(st.session_state.retention_results))
+            for i, (channel, df) in enumerate(st.session_state.retention_results.items()):
+                with retention_cols[i]:
+                    csv_data = df.to_csv(index=False, encoding='utf-8')
+                    st.download_button(
+                        label=f"🔄 留存-{channel.upper()}",
+                        data=csv_data.encode('utf-8'),
+                        file_name=f"{today} 留存_{channel}.csv",
+                        mime="text/csv",
+                        key=f"retention_{channel}"
+                    )
+                    st.text(f"{len(df)} 行数据")
+    
     else:
-        st.info("👆 请上传CSV文件开始处理")
+        st.info("👆 请上传相应的文件开始处理")
     
     # 页脚
     st.markdown("---")
     st.markdown(
         """
         <div style='text-align: center; color: #666;'>
-            <p>CSV文件合并工具 | 支持DAU数据处理和渠道分组</p>
+            <p>完整数据处理工具 | DAU合并 + 留存计算 + 数据整合</p>
         </div>
         """,
         unsafe_allow_html=True
