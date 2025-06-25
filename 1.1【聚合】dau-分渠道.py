@@ -1,5 +1,5 @@
 """
-专业数据处理工具 - 优化版
+日报数据处理工具 - 优化版
 ========================
 
 环境要求:
@@ -911,7 +911,7 @@ def main():
     # 主标题区域
     st.markdown("""
     <div class="main-header">
-        <h1 class="main-title">专业数据处理平台</h1>
+        <h1 class="main-title">日报数据处理平台</h1>
         <p class="main-subtitle">DAU合并 • 留存率计算 • 底表管理 • 数据校验</p>
     </div>
     """, unsafe_allow_html=True)
