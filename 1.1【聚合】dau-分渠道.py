@@ -1,9 +1,32 @@
+"""
+完整数据处理工具 - 集成版
+========================
+
+环境要求:
+- Python 3.8+
+- streamlit >= 1.28.0
+- pandas >= 1.5.0
+- numpy >= 1.20.0
+- openpyxl >= 3.0.0
+
+安装命令:
+pip install streamlit pandas numpy openpyxl
+
+运行命令:
+streamlit run app.py
+"""
+
 import streamlit as st
 import pandas as pd
 import datetime
 import re
 import io
+import numpy as np
+import warnings
 from typing import Dict, List, Optional, Tuple
+
+# 忽略警告
+warnings.filterwarnings('ignore')
 
 def convert_date_to_sortable(date_str: str) -> str:
     """将日期字符串转换为可排序的格式"""
@@ -515,24 +538,361 @@ def create_integrated_retention(retention_data: Dict[str, pd.DataFrame]) -> pd.D
         st.error(f"整合留存数据时出错: {str(e)}")
         return pd.DataFrame()
 
+def delete_excel_by_date_interface():
+    """底表日期删除界面"""
+    st.subheader("📅 底表日期删除功能")
+    
+    # 上传Excel文件
+    uploaded_excel = st.file_uploader(
+        "上传底表Excel文件",
+        type=['xlsx'],
+        help="请上传需要删除日期的Excel底表文件",
+        key="excel_uploader"
+    )
+    
+    if uploaded_excel:
+        st.success(f"已上传文件: {uploaded_excel.name}")
+        
+        # 计算默认日期（今天-2天）
+        from datetime import datetime, timedelta
+        default_date = datetime.now() - timedelta(days=2)
+        default_date_mmdd = default_date.strftime("%m%d")
+        default_date_display = default_date.strftime("%Y/%m/%d")
+        
+        st.info(f"默认截止日期（今天-2天）: {default_date_display}")
+        
+        # 创建两列输入
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**三端DAU截止日期**")
+            dau_date = st.text_input(
+                "格式: MMDD (如: 0601)",
+                value=default_date_mmdd,
+                help="删除该日期及之后的所有DAU数据",
+                key="dau_date"
+            )
+        
+        with col2:
+            st.markdown("**三端留存截止日期**")
+            retention_date = st.text_input(
+                "格式: MMDD (如: 0601)",
+                value="",
+                help="删除该日期及之后的所有留存数据",
+                key="retention_date"
+            )
+        
+        if st.button("🗑️ 执行删除操作", type="primary"):
+            if not retention_date:
+                st.error("请输入三端留存截止日期")
+                return
+            
+            try:
+                # 验证日期格式
+                for date_input, name in [(dau_date, "DAU"), (retention_date, "留存")]:
+                    if len(date_input) != 4 or not date_input.isdigit():
+                        st.error(f"{name}日期格式错误，请输入4位数字")
+                        return
+                
+                # 转换日期格式
+                dau_month, dau_day = dau_date[:2], dau_date[2:]
+                ret_month, ret_day = retention_date[:2], retention_date[2:]
+                
+                dau_cutoff = f"2025/{dau_month}/{dau_day}"
+                ret_cutoff = f"2025/{ret_month}/{ret_day}"
+                
+                # 验证日期有效性
+                pd.to_datetime(dau_cutoff)
+                pd.to_datetime(ret_cutoff)
+                
+                st.info(f"将删除:\n- 三端DAU: {dau_cutoff} 及之后的数据\n- 三端留存: {ret_cutoff} 及之后的数据")
+                
+                with st.spinner("正在处理Excel文件..."):
+                    # 读取Excel文件
+                    excel_content = uploaded_excel.getvalue()
+                    excel_file = pd.ExcelFile(io.BytesIO(excel_content))
+                    
+                    all_sheets_data = {}
+                    target_sheets = ['三端留存', '三端DAU']
+                    
+                    for sheet_name in excel_file.sheet_names:
+                        try:
+                            df = pd.read_excel(io.BytesIO(excel_content), sheet_name=sheet_name)
+                            
+                            if sheet_name not in target_sheets:
+                                all_sheets_data[sheet_name] = df
+                                continue
+                            
+                            # 获取截止日期
+                            cutoff_date_str = dau_cutoff if sheet_name == '三端DAU' else ret_cutoff
+                            
+                            if len(df) == 0:
+                                all_sheets_data[sheet_name] = df
+                                continue
+                            
+                            # 获取第一列作为日期列
+                            date_column = df.columns[0]
+                            
+                            # 过滤有效数据
+                            df_filtered = df.dropna(subset=[date_column]).copy()
+                            
+                            if len(df_filtered) == 0:
+                                all_sheets_data[sheet_name] = pd.DataFrame()
+                                continue
+                            
+                            # 转换日期
+                            df_filtered[date_column] = pd.to_datetime(df_filtered[date_column], errors='coerce')
+                            df_filtered = df_filtered.dropna(subset=[date_column]).copy()
+                            
+                            if len(df_filtered) == 0:
+                                all_sheets_data[sheet_name] = pd.DataFrame()
+                                continue
+                            
+                            # 转换为字符串格式进行比较
+                            df_filtered[date_column] = df_filtered[date_column].dt.strftime('%Y/%m/%d')
+                            
+                            # 删除指定日期及之后的数据
+                            df_final = df_filtered[df_filtered[date_column] < cutoff_date_str].copy()
+                            all_sheets_data[sheet_name] = df_final
+                            
+                        except Exception as e:
+                            st.error(f"处理sheet '{sheet_name}' 时出错: {str(e)}")
+                            all_sheets_data[sheet_name] = pd.DataFrame()
+                    
+                    # 创建新的Excel文件
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        for sheet_name, data in all_sheets_data.items():
+                            data.to_excel(writer, sheet_name=sheet_name, index=False)
+                    
+                    output.seek(0)
+                    
+                    st.success("✅ 删除操作完成!")
+                    
+                    # 显示删除结果统计
+                    st.markdown("### 删除结果统计")
+                    for sheet_name in target_sheets:
+                        if sheet_name in all_sheets_data:
+                            data = all_sheets_data[sheet_name]
+                            cutoff_used = dau_cutoff if sheet_name == '三端DAU' else ret_cutoff
+                            if len(data) > 0:
+                                date_col = data.columns[0]
+                                min_date = data[date_col].min()
+                                max_date = data[date_col].max()
+                                st.write(f"**{sheet_name}**: {len(data)}行 (截止: {cutoff_used}, 日期区间: {min_date} 至 {max_date})")
+                            else:
+                                st.write(f"**{sheet_name}**: 0行 (截止: {cutoff_used})")
+                    
+                    # 提供下载
+                    st.download_button(
+                        label="📥 下载处理后的Excel文件",
+                        data=output.getvalue(),
+                        file_name=f"底表_删除后_{datetime.now().strftime('%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                
+            except Exception as e:
+                st.error(f"处理过程中发生错误: {str(e)}")
+
+def validate_data_interface():
+    """数据校验界面"""
+    st.subheader("🔍 数据校验功能")
+    
+    # 上传文件
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        excel_file = st.file_uploader(
+            "上传底表Excel文件",
+            type=['xlsx'],
+            help="包含三端DAU和三端留存数据的Excel文件",
+            key="validate_excel"
+        )
+    
+    with col2:
+        csv_file = st.file_uploader(
+            "上传retention_all.csv文件",
+            type=['csv'],
+            help="用于对比校验的retention_all.csv文件",
+            key="validate_csv"
+        )
+    
+    if excel_file and csv_file:
+        if st.button("🚀 开始数据校验", type="primary"):
+            with st.spinner("正在进行数据校验..."):
+                try:
+                    # 读取Excel文件
+                    excel_content = excel_file.getvalue()
+                    
+                    # 读取三端DAU数据
+                    dau_df = pd.read_excel(io.BytesIO(excel_content), sheet_name='三端DAU')
+                    
+                    # 读取三端留存数据
+                    retention_df = pd.read_excel(io.BytesIO(excel_content), sheet_name='三端留存')
+                    
+                    # 读取CSV文件
+                    csv_content = csv_file.getvalue()
+                    retention_all_df = pd.read_csv(io.StringIO(csv_content.decode('utf-8')))
+                    
+                    # 处理retention_all数据
+                    def map_app_id_to_platform(app_id):
+                        if app_id == 'com.weather.mjweather':
+                            return 'android'
+                        elif app_id == 'id6720731790':
+                            return 'ios'
+                        elif app_id == 'com.moji.international':
+                            return 'mvp'
+                        else:
+                            return 'unknown'
+                    
+                    # 寻找App Id列
+                    app_id_columns = ['App Id', 'app_id', 'AppId', 'app id']
+                    app_id_col = None
+                    for col in app_id_columns:
+                        if col in retention_all_df.columns:
+                            app_id_col = col
+                            break
+                    
+                    if app_id_col:
+                        retention_all_df['三端'] = retention_all_df[app_id_col].apply(map_app_id_to_platform)
+                    
+                    # 创建数据透视表
+                    st.markdown("### 📊 数据透视表分析")
+                    
+                    # DAU透视表
+                    if not dau_df.empty:
+                        date_col = dau_df.columns[0]
+                        if '三端' in dau_df.columns and 'Installs' in dau_df.columns:
+                            dau_df[date_col] = pd.to_datetime(dau_df[date_col])
+                            dau_pivot = pd.pivot_table(
+                                dau_df,
+                                values='Installs',
+                                index=date_col,
+                                columns='三端',
+                                aggfunc='sum',
+                                fill_value=0
+                            ).sort_index(ascending=False).astype(int)
+                            
+                            st.markdown("**DAU数据透视表 (前10行)**")
+                            st.dataframe(dau_pivot.head(10))
+                    
+                    # 留存透视表
+                    if not retention_df.empty:
+                        date_col = retention_df.columns[0]
+                        if '三端' in retention_df.columns and 'Users' in retention_df.columns:
+                            retention_df[date_col] = pd.to_datetime(retention_df[date_col])
+                            retention_pivot = pd.pivot_table(
+                                retention_df,
+                                values='Users',
+                                index=date_col,
+                                columns='三端',
+                                aggfunc='sum',
+                                fill_value=0
+                            ).sort_index(ascending=False).astype(int)
+                            
+                            st.markdown("**留存数据透视表 (前10行)**")
+                            st.dataframe(retention_pivot.head(10))
+                    
+                    # retention_all透视表
+                    if not retention_all_df.empty and app_id_col:
+                        cohort_col = 'Cohort Day'
+                        if cohort_col in retention_all_df.columns:
+                            # 寻找数值列
+                            exclude_cols = [cohort_col, app_id_col, '三端']
+                            numeric_cols = [col for col in retention_all_df.columns 
+                                          if col not in exclude_cols and pd.api.types.is_numeric_dtype(retention_all_df[col])]
+                            
+                            if numeric_cols:
+                                value_col = numeric_cols[0]
+                                retention_all_df[cohort_col] = pd.to_datetime(retention_all_df[cohort_col])
+                                retention_all_pivot = pd.pivot_table(
+                                    retention_all_df,
+                                    values=value_col,
+                                    index=cohort_col,
+                                    columns='三端',
+                                    aggfunc='sum',
+                                    fill_value=0
+                                ).sort_index(ascending=False).astype(int)
+                                
+                                st.markdown("**Retention_all数据透视表 (前10行)**")
+                                st.dataframe(retention_all_pivot.head(10))
+                                
+                                # 数值对比分析
+                                if 'retention_pivot' in locals():
+                                    st.markdown("### 🔍 数值对比分析")
+                                    
+                                    overlapping_dates = set(retention_pivot.index).intersection(set(retention_all_pivot.index))
+                                    
+                                    if overlapping_dates:
+                                        comparison_data = []
+                                        
+                                        for date in sorted(overlapping_dates, reverse=True)[:10]:  # 显示最近10天
+                                            retention_sum = retention_pivot.loc[date].sum()
+                                            retention_all_sum = retention_all_pivot.loc[date].sum()
+                                            
+                                            if retention_all_sum > 0:
+                                                difference = retention_sum - retention_all_sum
+                                                percentage = (difference / retention_all_sum * 100) if retention_all_sum != 0 else 0
+                                                
+                                                comparison_data.append({
+                                                    '日期': date.strftime('%Y-%m-%d'),
+                                                    '留存总和': retention_sum,
+                                                    'Retention_all总和': retention_all_sum,
+                                                    '差异': difference,
+                                                    '差异百分比': f"{percentage:.2f}%"
+                                                })
+                                        
+                                        if comparison_data:
+                                            comparison_df = pd.DataFrame(comparison_data)
+                                            st.dataframe(comparison_df)
+                                            
+                                            # 统计摘要
+                                            differences = [row['差异'] for row in comparison_data]
+                                            if differences:
+                                                st.markdown("**对比摘要:**")
+                                                st.write(f"- 平均差异: {np.mean(differences):.0f}")
+                                                st.write(f"- 最大差异: {max(differences):.0f}")
+                                                st.write(f"- 最小差异: {min(differences):.0f}")
+                    
+                    st.success("✅ 数据校验完成!")
+                    
+                except Exception as e:
+                    st.error(f"数据校验过程中发生错误: {str(e)}")
+
 def main():
     st.set_page_config(
-        page_title="完整数据处理工具",
+        page_title="完整数据处理工具 - 集成版",
         page_icon="📊",
         layout="wide"
     )
     
-    st.title("📊 完整数据处理工具")
-    st.markdown("**DAU合并 + 留存率计算 + 数据整合**")
+    st.title("📊 完整数据处理工具 - 集成版")
+    st.markdown("**DAU合并 + 留存率计算 + 底表日期删除 + 数据校验**")
+    
+    # 添加环境要求提醒
+    st.markdown(
+        """
+        <div style='background-color: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #007bff;'>
+            <small>
+            <strong>🔧 环境要求：</strong><br>
+            • Python 3.8+ | Streamlit ≥1.28.0 | Pandas ≥1.5.0 | Numpy ≥1.20.0 | Openpyxl ≥3.0.0<br>
+            • 安装：<code>pip install streamlit pandas numpy openpyxl</code><br>
+            • 运行：<code>streamlit run app.py</code>
+            </small>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     st.markdown("---")
     
     # 使用说明
     with st.expander("📋 使用说明", expanded=True):
         st.markdown("""
         ### 🎯 功能概述
-        - **DAU文件合并**: 处理多个DAU CSV文件，按渠道分组合并
-        - **留存率计算**: 处理留存数据文件，自动计算各天留存率
-        - **数据整合**: 生成完整的三端数据文件和分渠道文件
+        1. **DAU文件合并**: 处理多个DAU CSV文件，按渠道分组合并
+        2. **留存率计算**: 处理留存数据文件，自动计算各天留存率
+        3. **底表日期删除**: 删除Excel底表中指定日期及之后的数据
+        4. **数据校验**: 对比分析底表数据与retention_all.csv数据的一致性
         
         ### 📁 文件要求
         **DAU文件命名**: `dau_渠道_日期.csv` (例如: `dau_mvp_3.17.csv`)
@@ -544,14 +904,18 @@ def main():
         - `retention_mvp.csv` (MVP渠道)
         - `retention_and.csv` (Android渠道)
         
+        **底表文件**: Excel格式，包含"三端DAU"和"三端留存"工作表
+        
         ### 📤 输出文件
         - **三端DAU汇总文件**: 包含所有渠道DAU数据
         - **三端留存汇总文件**: 包含所有渠道留存数据
         - **各渠道单独文件**: DAU和留存的分渠道文件
+        - **处理后底表**: 删除指定日期后的Excel文件
+        - **数据校验报告**: 数据一致性分析结果
         """)
     
-    # 创建两个标签页
-    tab1, tab2 = st.tabs(["📈 DAU文件处理", "🔄 留存文件处理"])
+    # 创建四个标签页
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 DAU文件处理", "🔄 留存文件处理", "📅 底表日期删除", "🔍 数据校验"])
     
     # 存储处理结果
     if 'dau_results' not in st.session_state:
@@ -601,10 +965,18 @@ def main():
                 if st.session_state.retention_results:
                     st.success("✅ 留存文件处理完成!")
     
-    # 如果有处理结果，显示数据预览和下载选项
+    # 底表日期删除标签页
+    with tab3:
+        delete_excel_by_date_interface()
+    
+    # 数据校验标签页
+    with tab4:
+        validate_data_interface()
+    
+    # 如果有DAU或留存处理结果，显示数据预览和下载选项
     if st.session_state.dau_results or st.session_state.retention_results:
         st.markdown("---")
-        st.subheader("📊 处理结果")
+        st.subheader("📊 文件处理结果")
         
         # 创建结果标签页
         result_tabs = []
@@ -770,14 +1142,14 @@ def main():
                     st.text(f"{len(df)} 行数据")
     
     else:
-        st.info("👆 请上传相应的文件开始处理")
+        st.info("👆 请选择相应的标签页开始处理数据")
     
     # 页脚
     st.markdown("---")
     st.markdown(
         """
         <div style='text-align: center; color: #666;'>
-            <p>完整数据处理工具 | DAU合并 + 留存计算 + 数据整合</p>
+            <p>完整数据处理工具 - 集成版 | DAU合并 + 留存计算 + 底表管理 + 数据校验</p>
         </div>
         """,
         unsafe_allow_html=True
