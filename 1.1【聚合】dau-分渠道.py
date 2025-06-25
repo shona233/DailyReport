@@ -8,9 +8,9 @@
 - pandas >= 1.5.0
 - numpy >= 1.20.0
 - openpyxl >= 3.0.0
-- plotly >= 5.0.0
+- matplotlib >= 3.5.0
 
-安装命令: pip install streamlit pandas numpy openpyxl plotly
+安装命令: pip install streamlit pandas numpy openpyxl matplotlib
 """
 
 import streamlit as st
@@ -20,9 +20,10 @@ import re
 import io
 import numpy as np
 import warnings
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib import font_manager
+import seaborn as sns
 from typing import Dict, List, Optional, Tuple
 
 # 忽略警告
@@ -378,6 +379,9 @@ def create_weather_visualization(df, title, chart_type="line"):
         except:
             df_viz = df.copy()
         
+        # 设置matplotlib样式
+        plt.style.use('default')
+        
         # 天气主题配色
         colors = ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe', '#00f2fe', '#43e97b']
         
@@ -386,54 +390,42 @@ def create_weather_visualization(df, title, chart_type="line"):
             numeric_cols = df_viz.select_dtypes(include=[np.number]).columns.tolist()
             
             if len(numeric_cols) > 0:
-                fig = go.Figure()
+                fig, ax = plt.subplots(figsize=(12, 6))
+                fig.patch.set_facecolor('white')
+                fig.patch.set_alpha(0.9)
                 
                 # 添加多个数值列的线图
                 for i, col in enumerate(numeric_cols[:5]):
-                    fig.add_trace(go.Scatter(
-                        x=df_viz[date_col],
-                        y=df_viz[col],
-                        mode='lines+markers',
-                        name=col,
-                        line=dict(width=3, color=colors[i % len(colors)]),
-                        marker=dict(size=8, line=dict(width=2, color='white')),
-                        hovertemplate=f'<b>{col}</b><br>日期: %{{x}}<br>数值: %{{y:,.0f}}<extra></extra>'
-                    ))
+                    valid_data = df_viz[[date_col, col]].dropna()
+                    if not valid_data.empty:
+                        ax.plot(valid_data[date_col], valid_data[col], 
+                               color=colors[i % len(colors)], 
+                               linewidth=3, 
+                               marker='o', 
+                               markersize=6,
+                               label=col,
+                               alpha=0.8)
                 
-                fig.update_layout(
-                    title=dict(
-                        text=title,
-                        x=0.5,
-                        font=dict(size=20, color='#333', family='Inter')
-                    ),
-                    xaxis_title="日期",
-                    yaxis_title="数值",
-                    hovermode='x unified',
-                    height=450,
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    font=dict(family='Inter'),
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="right",
-                        x=1
-                    ),
-                    xaxis=dict(
-                        showgrid=True,
-                        gridwidth=1,
-                        gridcolor='rgba(0,0,0,0.1)',
-                        zeroline=False
-                    ),
-                    yaxis=dict(
-                        showgrid=True,
-                        gridwidth=1,
-                        gridcolor='rgba(0,0,0,0.1)',
-                        zeroline=False
-                    )
-                )
+                ax.set_title(title, fontsize=16, fontweight='bold', color='#333', pad=20)
+                ax.set_xlabel('日期', fontsize=12, color='#666')
+                ax.set_ylabel('数值', fontsize=12, color='#666')
                 
+                # 美化样式
+                ax.grid(True, alpha=0.3)
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['left'].set_color('#ddd')
+                ax.spines['bottom'].set_color('#ddd')
+                
+                if len(numeric_cols) > 1:
+                    ax.legend(loc='upper left', frameon=False)
+                
+                # 格式化x轴日期
+                if df_viz[date_col].dtype == 'datetime64[ns]':
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+                    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
+                
+                plt.tight_layout()
                 return fig
                 
         elif chart_type == "bar":
@@ -444,42 +436,35 @@ def create_weather_visualization(df, title, chart_type="line"):
                 if numeric_cols:
                     agg_data = df_viz.groupby('三端')[numeric_cols[0]].sum().reset_index()
                     
-                    fig = go.Figure(data=[
-                        go.Bar(
-                            x=agg_data['三端'],
-                            y=agg_data[numeric_cols[0]],
-                            marker=dict(
-                                color=colors[:len(agg_data)],
-                                line=dict(width=2, color='white')
-                            ),
-                            hovertemplate='<b>%{x}</b><br>数值: %{y:,.0f}<extra></extra>'
-                        )
-                    ])
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    fig.patch.set_facecolor('white')
+                    fig.patch.set_alpha(0.9)
                     
-                    fig.update_layout(
-                        title=dict(
-                            text=title,
-                            x=0.5,
-                            font=dict(size=20, color='#333', family='Inter')
-                        ),
-                        xaxis_title="渠道",
-                        yaxis_title=numeric_cols[0],
-                        height=450,
-                        plot_bgcolor='rgba(0,0,0,0)',
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        font=dict(family='Inter'),
-                        xaxis=dict(
-                            showgrid=False,
-                            zeroline=False
-                        ),
-                        yaxis=dict(
-                            showgrid=True,
-                            gridwidth=1,
-                            gridcolor='rgba(0,0,0,0.1)',
-                            zeroline=False
-                        )
-                    )
+                    bars = ax.bar(agg_data['三端'], agg_data[numeric_cols[0]], 
+                                 color=colors[:len(agg_data)], 
+                                 alpha=0.8,
+                                 edgecolor='white',
+                                 linewidth=2)
                     
+                    ax.set_title(title, fontsize=16, fontweight='bold', color='#333', pad=20)
+                    ax.set_xlabel('渠道', fontsize=12, color='#666')
+                    ax.set_ylabel(numeric_cols[0], fontsize=12, color='#666')
+                    
+                    # 美化样式
+                    ax.grid(True, alpha=0.3, axis='y')
+                    ax.spines['top'].set_visible(False)
+                    ax.spines['right'].set_visible(False)
+                    ax.spines['left'].set_color('#ddd')
+                    ax.spines['bottom'].set_color('#ddd')
+                    
+                    # 在柱子上显示数值
+                    for bar in bars:
+                        height = bar.get_height()
+                        ax.text(bar.get_x() + bar.get_width()/2., height,
+                               f'{height:,.0f}',
+                               ha='center', va='bottom', fontweight='bold')
+                    
+                    plt.tight_layout()
                     return fig
         
         elif chart_type == "heatmap":
@@ -488,28 +473,31 @@ def create_weather_visualization(df, title, chart_type="line"):
             if len(numeric_cols) >= 2:
                 corr_matrix = df_viz[numeric_cols].corr()
                 
-                fig = go.Figure(data=go.Heatmap(
-                    z=corr_matrix.values,
-                    x=corr_matrix.columns,
-                    y=corr_matrix.columns,
-                    colorscale='RdBu_r',
-                    zmid=0,
-                    hoverongaps=False,
-                    hovertemplate='<b>%{x} vs %{y}</b><br>相关性: %{z:.2f}<extra></extra>'
-                ))
+                fig, ax = plt.subplots(figsize=(10, 8))
+                fig.patch.set_facecolor('white')
+                fig.patch.set_alpha(0.9)
                 
-                fig.update_layout(
-                    title=dict(
-                        text=f"{title} - 相关性分析",
-                        x=0.5,
-                        font=dict(size=20, color='#333', family='Inter')
-                    ),
-                    height=450,
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    font=dict(family='Inter')
-                )
+                im = ax.imshow(corr_matrix, cmap='RdBu_r', aspect='auto', vmin=-1, vmax=1)
                 
+                # 设置标签
+                ax.set_xticks(range(len(corr_matrix.columns)))
+                ax.set_yticks(range(len(corr_matrix.columns)))
+                ax.set_xticklabels(corr_matrix.columns, rotation=45, ha='right')
+                ax.set_yticklabels(corr_matrix.columns)
+                
+                # 添加数值标注
+                for i in range(len(corr_matrix.columns)):
+                    for j in range(len(corr_matrix.columns)):
+                        text = ax.text(j, i, f'{corr_matrix.iloc[i, j]:.2f}',
+                                     ha="center", va="center", color="black", fontweight='bold')
+                
+                ax.set_title(f"{title} - 相关性分析", fontsize=16, fontweight='bold', color='#333', pad=20)
+                
+                # 添加colorbar
+                cbar = plt.colorbar(im, ax=ax)
+                cbar.set_label('相关系数', rotation=270, labelpad=20)
+                
+                plt.tight_layout()
                 return fig
                 
     except Exception as e:
@@ -1124,14 +1112,16 @@ def main():
                 st.markdown('<div class="data-preview">', unsafe_allow_html=True)
                 fig_line = create_weather_visualization(integrated_dau, "📈 DAU趋势分析", "line")
                 if fig_line:
-                    st.plotly_chart(fig_line, use_container_width=True, config={'displayModeBar': False})
+                    st.pyplot(fig_line, use_container_width=True)
+                    plt.close(fig_line)  # 释放内存
                 st.markdown('</div>', unsafe_allow_html=True)
             
             with viz_cols[1]:
                 st.markdown('<div class="data-preview">', unsafe_allow_html=True)
                 fig_bar = create_weather_visualization(integrated_dau, "🔍 渠道对比分析", "bar")
                 if fig_bar:
-                    st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
+                    st.pyplot(fig_bar, use_container_width=True)
+                    plt.close(fig_bar)  # 释放内存
                 st.markdown('</div>', unsafe_allow_html=True)
             
             # 数据预览表格
@@ -1253,14 +1243,16 @@ def main():
                 st.markdown('<div class="data-preview">', unsafe_allow_html=True)
                 fig_retention = create_weather_visualization(integrated_retention, "📈 留存率趋势", "line")
                 if fig_retention:
-                    st.plotly_chart(fig_retention, use_container_width=True, config={'displayModeBar': False})
+                    st.pyplot(fig_retention, use_container_width=True)
+                    plt.close(fig_retention)  # 释放内存
                 st.markdown('</div>', unsafe_allow_html=True)
             
             with retention_viz_cols[1]:
                 st.markdown('<div class="data-preview">', unsafe_allow_html=True)
                 fig_retention_bar = create_weather_visualization(integrated_retention, "🔍 渠道留存对比", "bar")
                 if fig_retention_bar:
-                    st.plotly_chart(fig_retention_bar, use_container_width=True, config={'displayModeBar': False})
+                    st.pyplot(fig_retention_bar, use_container_width=True)
+                    plt.close(fig_retention_bar)  # 释放内存
                 st.markdown('</div>', unsafe_allow_html=True)
             
             # 留存数据预览
